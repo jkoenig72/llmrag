@@ -13,19 +13,17 @@ from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain_community.tools.tavily_search import TavilySearchResults
 
+# ────────────────────────────────────────────────────────────────
+# Logging & Config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 SKIP_INDEXING = True
-SKIP_RAG = False 
+PROCESSED_RECORD = os.environ.get("PROCESSED_RECORD", "/home/fritz/RAG_sf_e5_v1_2.json")
+INDEX_DIR = os.environ.get("INDEX_DIR", "/home/fritz/faiss_index_sf_e5_v1_2")
+BASE_DIR = os.environ.get("BASE_DIR", "/home/fritz/RAG_C")
+TAVILY_API_KEY = "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"
 
-# Hardcoded local paths (adjust as needed)
-PROCESSED_RECORD = "/home/fritz/RAG_sf_e5_v1_2.json"
-INDEX_DIR = "/home/fritz/faiss_index_sf_e5_v1_2"
-BASE_DIR = "/home/fritz/RAG_C"
-
-# API Key from environment variable (optional fallback if needed)
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
-
+# ────────────────────────────────────────────────────────────────
 def compute_file_hash(file_path):
     hash_md5 = hashlib.md5()
     try:
@@ -41,8 +39,10 @@ def load_processed_records(record_file):
         try:
             with open(record_file, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            logging.error(f"Failed to load records from {record_file}: {e}")
+        except FileNotFoundError:
+            logging.error(f"Processed record file not found: {record_file}")
+        except json.JSONDecodeError:
+            logging.error(f"Error decoding JSON from {record_file}")
     return {}
 
 def save_processed_records(records, record_file):
@@ -103,10 +103,22 @@ def process_file(file_path: str, splitter: MarkdownHeaderTextSplitter, embedding
 
         return num_chunks, faiss_index
 
+    except FileNotFoundError:
+        logging.error(f"File not found: {file_path}")
+        return 0, faiss_index
+    except frontmatter.FrontmatterError as e:
+        logging.error(f"Frontmatter parsing error in {file_path}: {e}")
+        return 0, faiss_index
     except Exception as e:
-        logging.error(f"Error processing file {file_path}: {e}")
+        logging.error(f"Unexpected error processing file {file_path}: {e}")
         return 0, faiss_index
 
+def validate_faiss_index(index_dir):
+    # Implement validation logic as needed
+    # For now, just check if the directory exists and contains expected files
+    return os.path.exists(index_dir)
+
+# ────────────────────────────────────────────────────────────────
 def main():
     logging.info(f"Starting processing of files from: {BASE_DIR}")
     file_paths = get_file_paths(BASE_DIR)
@@ -127,32 +139,69 @@ def main():
 
     if SKIP_INDEXING:
         logging.info("SKIP_INDEXING=True → Loading existing FAISS index only")
-        if os.path.exists(INDEX_DIR):
+        # Validate the FAISS index file before loading
+        if os.path.exists(INDEX_DIR) and validate_faiss_index(INDEX_DIR):
+            logging.warning(
+                "Loading FAISS index with allow_dangerous_deserialization=True. "
+                "Ensure the index file is from a trusted source!"
+            )
             faiss_index = FAISS.load_local(INDEX_DIR, embeddings, allow_dangerous_deserialization=True)
         else:
-            logging.error("FAISS index file not found.")
+            logging.error("FAISS index file is missing or failed validation.")
             return
     else:
-        faiss_index = None
-        for file_path in file_paths:
+        if os.path.exists(INDEX_DIR) and validate_faiss_index(INDEX_DIR):
+            logging.info(f"Loading existing FAISS index from '{INDEX_DIR}'...")
+            logging.warning(
+                "Loading FAISS index with allow_dangerous_deserialization=True. "
+                "Ensure the index file is from a trusted source!"
+            )
+            faiss_index = FAISS.load_local(INDEX_DIR, embeddings, allow_dangerous_deserialization=True)
+        else:
+            faiss_index = None
+
+        processed_files_count = 0
+        total_chunks_processed = 0
+
+        for i, file_path in enumerate(file_paths, start=1):
+            progress = (i / total_files) * 100
+            logging.info(f"Processing file {i}/{total_files} ({progress:.1f}%): {file_path}")
             file_hash = compute_file_hash(file_path)
+
             if file_path in processed_records and processed_records[file_path] == file_hash:
+                logging.info(f"Skipping already processed file: {file_path}")
                 continue
-            chunks, faiss_index = process_file(file_path, splitter, embeddings, faiss_index)
+
+            chunks_processed, faiss_index = process_file(file_path, splitter, embeddings, faiss_index)
+            total_chunks_processed += chunks_processed
             processed_records[file_path] = file_hash
+            processed_files_count += 1
 
+            if i % 100 == 0:
+                save_processed_records(processed_records, PROCESSED_RECORD)
+                if faiss_index is not None:
+                    with faiss_index:
+                        faiss_index.save_local(INDEX_DIR, allow_dangerous_deserialization=True)
+                    logging.info(f"FAISS index saved locally to '{INDEX_DIR}'.")
+                logging.info(f"Checkpoint: Processed records and FAISS index updated after {i} files.")
+
+        logging.info(f"Finished indexing. Processed {processed_files_count} new files; Total new chunks: {total_chunks_processed}")
         save_processed_records(processed_records, PROCESSED_RECORD)
-        if faiss_index:
-            faiss_index.save_local(INDEX_DIR)
+        if faiss_index is not None:
+            with faiss_index:
+                faiss_index.save_local(INDEX_DIR, allow_dangerous_deserialization=True)
+            logging.info(f"FAISS index saved locally to '{INDEX_DIR}'.")
+        else:
+            logging.error("No FAISS index was created. Exiting.")
+            return
 
+    logging.info("Creating retriever from FAISS index...")
     retriever = faiss_index.as_retriever(search_kwargs={"k": 3})
 
     logging.info("Loading local LLM using Ollama...")
-    llm = OllamaLLM(model="gemma3:12b", base_url="http://localhost:11434")
+    ollama_llm = OllamaLLM(model="gemma3:12b", base_url="http://localhost:11434")
 
-    logging.info("Initializing Tavily Web Search tool...")
-    web_search = TavilySearchResults(k=3, tavily_api_key=TAVILY_API_KEY)
-
+    logging.info("Defining Refine prompts...")
     question_prompt = PromptTemplate.from_template("""
 You are a very Senior Solution Engineer at Salesforce. You have deep expertise in Salesforce products, including configuration, architecture, data modeling, integrations, and best practices.
 You will receive questions from a RFP provided by A1, a leading Communication Service Provider (CSP) in Austria. Therefore focus on Salesforce Communications Cloud and related Salesforce Cloud products.
@@ -166,12 +215,6 @@ Instructions:
 - Use a professional, solution-oriented tone.
 - Make the answer accessible to both technical and non-technical stakeholders.
 - If the question is out of scope or not applicable, respond with "N/A" and briefly explain why.
-
-After your answer, assess and state the Compliance Level based on the context:
-- FC (Fully Compliant): All aspects of the requirement are satisfied.
-- PC (Partially Compliant): Some aspects are satisfied.
-- NC (Non-Compliant): The requirement is not met.
-- NA (Not Applicable): The requirement is out of scope.
 
 Context:
 {context_str}
@@ -190,12 +233,6 @@ Instructions:
 - Be precise, relevant, and avoid repetition.
 - If the question is out of scope or not addressed in the context, respond with "N/A" and briefly explain why.
 
-At the end of your response, update the Compliance Level:
-- FC (Fully Compliant)
-- PC (Partially Compliant)
-- NC (Non-Compliant)
-- NA (Not Applicable)
-
 Original Question:
 {question}
 
@@ -208,50 +245,43 @@ Additional Context:
 Refined Answer:
 """)
 
-    #query = "In Industry Order Managment (IOM) what is the purpose of a Point of no return (PONT)?"
-    #query = "What is the purpose of Industry Order Management as described in these documents?"
-    #query = "Explain Email to Case in Service Cloud."
-    query = "Explain Salesforce Flow and how you can model / execute workflows in Salesforce."
-    #query = "In Sales Cloud, describe Lead to Opportunity process?"
-    #query = "What are the options to implement product catalog synchronization from an external source?"
+    logging.info("Initializing Tavily Web Search tool...")
+    web_search = TavilySearchResults(k=3, tavily_api_key=TAVILY_API_KEY)
 
-    if SKIP_RAG:
-        logging.info("SKIP_RAG=True → Using only the LLM without retrieval")
-        prompt = question_prompt.format(context="N/A", question=query)
-        result = llm.invoke(prompt)
-        print("\n====================================")
-        print("Question:", query)
-        print("Answer:", result)
-        print("====================================")
-        return
-
-    logging.info("Building RetrievalQA Refine chain with prompts...")
+    logging.info("Building Refine chain...")
     qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=retriever,
-    chain_type="refine",
-    return_source_documents=True,
-    input_key="question",  # 🔥 This line makes it work
-    chain_type_kwargs={
-        "question_prompt": question_prompt,
-        "refine_prompt": refine_prompt,
-    }
+        llm=ollama_llm,
+        retriever=retriever,
+        chain_type="refine",
+        return_source_documents=True,
+        chain_type_kwargs={
+            "question_prompt": question_prompt,
+            "refine_prompt": refine_prompt
+        }
     )
 
+    #query = "What is the difference between Managed Package and Unmanaged Package in Salesforce? Give me some level of detail, around 10 sentences."
+    #query = "What is the purpose of Industry Order Management as described in these documents? Give me some level of detail, around 10 sentences."
+    query = "In Industry Order Managment (IOM) what is the purpose of a Point of no return (PONT)?"
+    #query = "Explain Email to Case in Service Cloud. Give me some level of detail, around 10 sentences."
+    #query = "Explain Salesforce Flow and how you can model / execute workflows in Salesforce. Give me some level of detail, around 10 sentences."
+    #query = "In Sales Cloud, describe Lead to Opportunity process? Give me some level of detail, around 10 sentences."
+    #query = "What are the options to implement product catalog synchronization from an external source?"
 
     logging.info(f"Running query: {query}")
-    result = qa_chain.invoke({"question": query})
-
-    logging.info(f"Result from RetrievalQA chain: {result}")
+    result = qa_chain.invoke({"query": query})
 
     if not result.get("result") or not result.get("source_documents"):
         logging.info("No relevant RAG content → Falling back to Tavily search...")
         web_results = web_search.run(query)
-        logging.info(f"Web search results: {json.dumps(web_results, indent=2)}")
+        print("\n--- Web Search Results (Fallback) ---")
+        print(json.dumps(web_results, indent=2))
     else:
-        logging.info("Successfully retrieved relevant content using RetrievalQA.")
-        logging.info(f"RAG Answer: {result['result']}")
-        logging.info(f"Source Documents: {result['source_documents']}")
+        print("\n====================================")
+        print("Query:", query)
+        print("Answer:", result["result"])
+        print("====================================")
 
+# ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     main()
