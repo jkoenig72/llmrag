@@ -1,0 +1,11 @@
+beautifulsoup4
+markdownify
+selenium
+webdriver-manager
+python-frontmatter
+langchain
+langchain-community
+langchain-huggingface
+langchain-ollama
+
+
