@@ -20,10 +20,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 SKIP_INDEXING = True
 SKIP_RAG = False  # ← Set this to True to skip RAG and only use LLM
 
-PROCESSED_RECORD = os.environ.get("PROCESSED_RECORD", "/home/fritz/RAG_sf_e5_v1_2.json")
-INDEX_DIR = os.environ.get("INDEX_DIR", "/home/fritz/faiss_index_sf_e5_v1_2")
-BASE_DIR = os.environ.get("BASE_DIR", "/home/fritz/RAG_C")
-TAVILY_API_KEY = "REMOVED_API_KEY"
+# Hardcoded local paths (adjust as needed)
+PROCESSED_RECORD = "/home/fritz/RAG_sf_e5_v1_2.json"
+INDEX_DIR = "/home/fritz/faiss_index_sf_e5_v1_2"
+BASE_DIR = "/home/fritz/RAG_C"
+
+# API Key from environment variable (optional fallback if needed)
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 
 # ────────────────────────────────────────────────────────────────
 def compute_file_hash(file_path):
