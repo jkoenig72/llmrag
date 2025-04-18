@@ -1,8 +1,10 @@
 import os
+import re
 import json
 import logging
+from typing import List, Dict, Any, Optional, Tuple
 import gspread
-from typing import List, Dict
+from dotenv import load_dotenv
 from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
@@ -13,77 +15,180 @@ from langchain.prompts import PromptTemplate
 # ────────────────────────────────────────────────────────────────
 # Configuration
 # ────────────────────────────────────────────────────────────────
-GOOGLE_SHEET_ID = "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0"
-GOOGLE_CREDENTIALS_FILE = "/home/fritz/llms-env/credentials.json"
+load_dotenv()
 
-BASE_DIR = "/home/fritz/RAG_C"
-INDEX_DIR = "/home/fritz/faiss_index_sf_e5_v1_2"
-SKIP_INDEXING = True
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0")
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", os.path.expanduser("~/llms-env/credentials.json"))
+BASE_DIR = os.getenv("BASE_DIR", os.path.expanduser("~/RAG"))
+INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("~/faiss_index_sf"))
+SKIP_INDEXING = os.getenv("SKIP_INDEXING", "True").lower() == "true"
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma3:12b")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/e5-large-v2")
 
 QUESTION_ROLE = "question"
 CONTEXT_ROLE = "context"
 ANSWER_ROLE = "answer"
 COMPLIANCE_ROLE = "compliance"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(os.path.join(BASE_DIR, "rag_processing.log")),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────
-# Prompt Templates (plain text output)
+# Prompt Templates
 # ────────────────────────────────────────────────────────────────
-QUESTION_PROMPT = PromptTemplate(
-    input_variables=["question", "context_str"],
+QUESTION_PROMPT = PromptTemplate.from_template(
     template="""
-You are a Senior Solution Engineer at Salesforce. You have deep expertise in Salesforce products, especially Communications Cloud.
+You are a Senior Solution Engineer at Salesforce, with deep expertise in Salesforce products — especially Communications Cloud.
 
-Answer the following RFP question using only the context provided and any additional relevant information from the question.
+Your task is to answer the following RFI (Request for Information) question using only the provided context and any additional clues from the question. Your response must be:
+- Clear
+- Professional
+- Focused on Salesforce product relevance
 
-Instructions:
-- Focus on Salesforce Cloud products.
-- Use a professional, concise tone suitable for RFP responses.
-- Include business value and product strengths.
-- Return a plain text response, no JSON.
+---
+
+❗️**STEP 1: EVALUATE RELEVANCE**
+
+Is the question relevant to Salesforce?
+- About any Salesforce product (Sales Cloud, Service Cloud, Communications Cloud, etc.)?
+- Concerning business processes, customer engagement, cloud platforms, or integrations?
+
+❌ **If NOT relevant**, respond ONLY with:
+{
+  "compliance": "NA",
+  "answer": "This question is not applicable to Salesforce or its product offerings and should be marked as out of scope."
+}
+
+---
+
+✅ **If relevant, continue to STEP 2.**
+
+❗️**STEP 2: DETERMINE COMPLIANCE LEVEL**
+
+1. **FC (Fully Compliant)** - Supported via standard configuration or UI-based setup
+   - No custom code required (e.g., Flow, page layouts, permissions, validation rules are NOT custom code)
+
+2. **PC (Partially Compliant)** - Requires custom development (Apex, LWC, APIs, external integrations)
+
+3. **NC (Not Compliant)** - Not possible in Salesforce even with customization
+
+4. **NA (Not Applicable)** - Determined in Step 1
+
+---
+
+❗️**STEP 3: FORMAT**
+Return ONLY:
+{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your concise professional explanation (5–10 sentences)"
+}
 
 Context:
-{context_str}
+{{ context_str }}
 
 Question:
-{question}
+{{ question }}
 
-Answer:
-"""
+Answer (JSON only):
+""",
+    template_format="jinja2"
 )
 
-REFINE_PROMPT = PromptTemplate(
-    input_variables=["question", "existing_answer", "context_str"],
+REFINE_PROMPT = PromptTemplate.from_template(
     template="""
-We are refining the previous answer using new additional context.
+We are refining an earlier RFI response based on new context.
+
+Update the JSON if:
+1. Compliance level should change
+2. New detail needs to be added
+3. Previous answer was inaccurate
+
+Compliance levels:
+- FC: Supported via standard UI/config (Flow, page layouts, no code)
+- PC: Requires custom code (Apex, LWC, APIs)
+- NC: Not possible in Salesforce
+- NA: Out of Salesforce scope
+
+Only return valid JSON like this:
+{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your concise professional explanation (5–10 sentences)"
+}
 
 Question:
-{question}
+{{ question }}
 
-Existing Answer:
-{existing_answer}
+Existing JSON Answer:
+{{ existing_answer }}
 
 New Context:
-{context_str}
+{{ context_str }}
 
-Refined Answer:
-"""
+Refined Answer (JSON only):
+""",
+    template_format="jinja2"
 )
 
 # ────────────────────────────────────────────────────────────────
 # Google Sheets Utilities
 # ────────────────────────────────────────────────────────────────
-def load_google_sheet(sheet_id: str, credentials_path: str):
-    client = gspread.service_account(filename=credentials_path)
-    sheet = client.open_by_key(sheet_id).sheet1
-    all_values = sheet.get_all_values()
-    headers = all_values[0]
-    roles = all_values[1]
-    rows = all_values[2:]
-    return headers, roles, rows, sheet
+class GoogleSheetHandler:
+    def __init__(self, sheet_id: str, credentials_path: str):
+        try:
+            self.client = gspread.service_account(filename=credentials_path)
+            self.sheet = self.client.open_by_key(sheet_id).sheet1
+            logger.info(f"Connected to Google Sheet with ID: {sheet_id}")
+        except Exception as e:
+            logger.critical(f"Failed to connect to Google Sheet: {e}")
+            raise
 
-def parse_records(headers: List[str], roles: List[str], rows: List[List[str]]):
+    def load_data(self) -> Tuple[List[str], List[str], List[List[str]], Any]:
+        try:
+            all_values = self.sheet.get_all_values()
+            if len(all_values) < 2:
+                logger.warning("Sheet has insufficient data (less than 2 rows).")
+                return [], [], [], self.sheet
+
+            headers = all_values[0]
+            roles = all_values[1]
+            rows = all_values[2:] if len(all_values) > 2 else []
+
+            logger.info(f"Loaded {len(rows)} data rows from Google Sheet.")
+            return headers, roles, rows, self.sheet
+        except Exception as e:
+            logger.error(f"Error loading data from Google Sheet: {e}")
+            raise
+
+    def update_batch(self, updates: List[Dict[str, Any]]):
+        try:
+            if not updates:
+                return
+
+            batch_updates = []
+            for update in updates:
+                row, col, value = update["row"], update["col"], update["value"]
+                batch_updates.append({
+                    'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
+                    'values': [[value]]
+                })
+
+            if batch_updates:
+                self.sheet.batch_update(batch_updates)
+                logger.info(f"Batch updated {len(batch_updates)} cells.")
+        except Exception as e:
+            logger.error(f"Error performing batch update: {e}")
+            raise
+
+def parse_records(headers: List[str], roles: List[str], rows: List[List[str]]) -> List[Dict[str, Any]]:
     records = []
     for i, row in enumerate(rows):
         row_dict = {headers[j]: row[j] if j < len(row) else "" for j in range(len(headers))}
@@ -91,100 +196,200 @@ def parse_records(headers: List[str], roles: List[str], rows: List[List[str]]):
         records.append({
             "raw": row_dict,
             "roles": role_map,
-            "sheet_row": i + 3  # +3 for header + role rows + 1-based indexing
+            "sheet_row": i + 3
         })
     return records
 
-def find_output_columns(headers: List[str], roles: List[str]) -> Dict[str, int]:
+def find_output_columns(roles: List[str]) -> Dict[str, int]:
     role_map = {}
     for idx, role in enumerate(roles):
         role_lower = role.strip().lower()
         if role_lower in (ANSWER_ROLE, COMPLIANCE_ROLE):
-            role_map[role_lower] = idx + 1  # 1-based for gspread
+            role_map[role_lower] = idx + 1
+    if not role_map:
+        logger.warning(f"No output columns found for roles: {ANSWER_ROLE}, {COMPLIANCE_ROLE}")
     return role_map
-
-def update_output_fields(sheet, row: int, values: Dict[str, str], output_columns: Dict[str, int]):
-    for role, content in values.items():
-        col = output_columns.get(role.lower())
-        if col:
-            try:
-                sheet.update_cell(row, col, content)
-                logging.info(f"✅ Updated row {row}, column '{role}' → {content[:40]}...")
-            except Exception as e:
-                logging.error(f"❌ Failed to update cell {role} at row {row}: {e}")
 
 # ────────────────────────────────────────────────────────────────
 # FAISS Retriever
 # ────────────────────────────────────────────────────────────────
 def load_faiss_index(index_dir: str):
-    embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
-    if SKIP_INDEXING:
-        if os.path.exists(index_dir):
-            logging.info("Loading FAISS index from disk...")
-            return FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
-        raise FileNotFoundError(f"FAISS index not found at {index_dir}")
-    raise NotImplementedError("Indexing disabled.")
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        if SKIP_INDEXING:
+            if os.path.exists(index_dir):
+                logger.info(f"Loading FAISS index from {index_dir}...")
+                return FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
+            else:
+                logger.critical(f"FAISS index not found at: {index_dir}")
+                raise FileNotFoundError(f"FAISS index not found at {index_dir}")
+        else:
+            raise NotImplementedError("Indexing is currently disabled. Set SKIP_INDEXING=True to use existing index.")
+    except Exception as e:
+        logger.error(f"Error loading FAISS index: {e}")
+        raise
+
+# ────────────────────────────────────────────────────────────────
+# LLM Output Processing
+# ────────────────────────────────────────────────────────────────
+def extract_json_from_llm_response(response: str) -> Dict[str, str]:
+    default_result = {
+        "answer": response.strip(),
+        "compliance": "PC"
+    }
+    try:
+        try:
+            parsed = json.loads(response.strip())
+            if "answer" in parsed and "compliance" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        cleaned = response.strip()
+        code_block_pattern = r"```(?:json)?(.*?)```"
+        matches = re.findall(code_block_pattern, cleaned, re.DOTALL)
+        for match in matches:
+            try:
+                parsed = json.loads(match.strip())
+                if "answer" in parsed and "compliance" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        json_pattern = r"\{.*?\}"
+        matches = re.findall(json_pattern, cleaned, re.DOTALL)
+        for match in matches:
+            try:
+                parsed = json.loads(match.strip())
+                if "answer" in parsed and "compliance" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        for prefix in ['```json', '```']:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+        for suffix in ['```']:
+            if cleaned.endswith(suffix):
+                cleaned = cleaned[:-len(suffix)]
+        try:
+            parsed = json.loads(cleaned.strip())
+            if "answer" in parsed and "compliance" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    except Exception as e:
+        logger.warning(f"All JSON extraction strategies failed: {e}")
+
+    compliance_indicators = {
+        "NA": ["not applicable", "out of scope", "irrelevant", "not relevant"],
+        "NC": ["not compliant", "not possible", "cannot be achieved", "not supported"],
+        "FC": ["fully compliant", "standard functionality", "out of the box", "built-in"],
+        "PC": ["partially compliant", "customization", "configuration", "workaround"]
+    }
+
+    response_lower = response.lower()
+    determined_compliance = None
+    for compliance, indicators in compliance_indicators.items():
+        if any(indicator in response_lower for indicator in indicators):
+            determined_compliance = compliance
+            break
+    if determined_compliance:
+        default_result["compliance"] = determined_compliance
+    return default_result
+
+def validate_compliance_value(value: str) -> str:
+    valid_values = ["FC", "PC", "NC", "NA"]
+    clean_value = value.strip().upper()
+    if clean_value in valid_values:
+        return clean_value
+    if clean_value in ["FULLY COMPLIANT", "FULLY-COMPLIANT"]:
+        return "FC"
+    elif clean_value in ["PARTIALLY COMPLIANT", "PARTIALLY-COMPLIANT"]:
+        return "PC"
+    elif clean_value in ["NOT COMPLIANT", "NON COMPLIANT", "NON-COMPLIANT"]:
+        return "NC"
+    elif clean_value in ["NOT APPLICABLE", "N/A"]:
+        return "NA"
+    logger.warning(f"Invalid compliance value: '{value}', defaulting to 'PC'")
+    return "PC"
 
 # ────────────────────────────────────────────────────────────────
 # Main Execution
 # ────────────────────────────────────────────────────────────────
 def main():
-    headers, roles, rows, sheet = load_google_sheet(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
-    records = parse_records(headers, roles, rows)
-    output_columns = find_output_columns(headers, roles)
-    logging.info(f"Loaded {len(records)} records from Google Sheet.")
+    try:
+        logger.info("Starting RAG processing...")
+        sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
+        headers, roles, rows, sheet = sheet_handler.load_data()
+        records = parse_records(headers, roles, rows)
+        output_columns = find_output_columns(roles)
+        if not output_columns:
+            logger.error("No output columns found. Exiting.")
+            return
 
-    retriever = load_faiss_index(INDEX_DIR).as_retriever(search_kwargs={"k": 3})
-    llm = OllamaLLM(model="deepseek-coder-v2:16b", base_url="http://localhost:11434")
+        retriever = load_faiss_index(INDEX_DIR).as_retriever(search_kwargs={"k": 6})
+        llm = OllamaLLM(model=LLM_MODEL, base_url=LLM_BASE_URL)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=retriever,
+            chain_type="refine",
+            input_key="question",
+            return_source_documents=True,
+            chain_type_kwargs={
+                "question_prompt": QUESTION_PROMPT,
+                "refine_prompt": REFINE_PROMPT
+            }
+        )
 
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=retriever,
-        chain_type="refine",
-        input_key="question",
-        return_source_documents=True,
-        chain_type_kwargs={
-            "question_prompt": QUESTION_PROMPT,
-            "refine_prompt": REFINE_PROMPT
-        }
-    )
+        batch_updates = []
+        for i, record in enumerate(records):
+            row_num = record["sheet_row"]
+            question = record["roles"].get(QUESTION_ROLE, "").strip()
+            if not question:
+                logger.warning(f"⏭️ Row {row_num} skipped: No question found.")
+                continue
 
-    for record in records:
-        row_num = record["sheet_row"]
-        question = record["roles"].get(QUESTION_ROLE, "").strip()
-        if not question:
-            logging.warning(f"⏭️ Row {row_num} skipped: No question found.")
-            continue
+            additional_context = "\n".join([
+                f"{k}: {v}" for k, v in record["roles"].items()
+                if k.strip().lower() == CONTEXT_ROLE and v.strip()
+            ]).strip() or "N/A"
 
-        additional_context = "\n".join([
-            f"{k}: {v}" for k, v in record["roles"].items()
-            if k.strip().lower() == CONTEXT_ROLE and v.strip()
-        ]).strip() or "N/A"
+            enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
 
-        enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
+            try:
+                result = qa_chain.invoke({"question": enriched_question})
+                raw_answer = result["result"].strip()
+                parsed = extract_json_from_llm_response(raw_answer)
+                answer_text = parsed.get("answer", "")
+                compliance_value = validate_compliance_value(parsed.get("compliance", "PC"))
 
-        try:
-            result = qa_chain.invoke({"question": enriched_question})
-            answer_text = result["result"].strip()
+                for role, col in output_columns.items():
+                    if role == ANSWER_ROLE:
+                        batch_updates.append({"row": row_num, "col": col, "value": answer_text})
+                    elif role == COMPLIANCE_ROLE:
+                        batch_updates.append({"row": row_num, "col": col, "value": compliance_value})
 
-            update_output_fields(
-                sheet,
-                row_num,
-                {
-                    "answer": answer_text,
-                    "compliance": "FC" if "fully" in answer_text.lower() else "PC"  # crude default
-                },
-                output_columns
-            )
+                if len(batch_updates) >= BATCH_SIZE or i == len(records) - 1:
+                    sheet_handler.update_batch(batch_updates)
+                    batch_updates = []
 
-            print("\n" + "=" * 40)
-            print(f"✅ Row {row_num} complete")
-            print(f"Question: {question}")
-            print(f"Answer:\n{answer_text}")
-            print("=" * 40)
+                logger.info(f"✅ Row {row_num} processed - Compliance: {compliance_value}")
+                print("\n" + "=" * 40)
+                print(f"✅ Row {row_num} complete")
+                print(f"Question: {question}")
+                print(f"Answer: {answer_text}")
+                print(f"Compliance: {compliance_value}")
+                print("=" * 40)
 
-        except Exception as e:
-            logging.error(f"❌ Failed to process row {row_num}: {e}")
+            except Exception as e:
+                logger.error(f"❌ Failed to process row {row_num}: {e}")
+
+        logger.info("RAG processing completed successfully.")
+
+    except Exception as e:
+        logger.critical(f"Critical error in main execution: {e}")
 
 if __name__ == "__main__":
     main()

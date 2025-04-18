@@ -22,8 +22,8 @@ load_dotenv()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0")
 GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", os.path.expanduser("~/llms-env/credentials.json"))
 
-BASE_DIR = os.getenv("BASE_DIR", os.path.expanduser("~/RAG_C"))
-INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("~/faiss_index_sf_e5_v1_2"))
+BASE_DIR = os.getenv("BASE_DIR", os.path.expanduser("~/RAG"))
+INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("~/faiss_index_sf"))
 SKIP_INDEXING = os.getenv("SKIP_INDEXING", "True").lower() == "true"
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
 LLM_MODEL = os.getenv("LLM_MODEL", "qwq")
