@@ -135,7 +135,7 @@ def main():
     logging.info(f"Loaded {len(records)} records from Google Sheet.")
 
     retriever = load_faiss_index(INDEX_DIR).as_retriever(search_kwargs={"k": 3})
-    llm = OllamaLLM(model="gemma3:27b", base_url="http://localhost:11434")
+    llm = OllamaLLM(model="deepseek-coder-v2:16b", base_url="http://localhost:11434")
 
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,

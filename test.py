@@ -1,287 +1,506 @@
 import os
+import re
 import json
-import hashlib
 import logging
-import frontmatter
-import uuid
-
+from typing import List, Dict, Any, Optional, Tuple
+import gspread
+from dotenv import load_dotenv
 from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from langchain_community.tools.tavily_search import TavilySearchResults
 
 # ────────────────────────────────────────────────────────────────
-# Logging & Config
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Configuration
+# ────────────────────────────────────────────────────────────────
+# Load environment variables from .env file
+load_dotenv()
 
-SKIP_INDEXING = True
-PROCESSED_RECORD = os.environ.get("PROCESSED_RECORD", "/home/fritz/RAG_sf_e5_v1_2.json")
-INDEX_DIR = os.environ.get("INDEX_DIR", "/home/fritz/faiss_index_sf_e5_v1_2")
-BASE_DIR = os.environ.get("BASE_DIR", "/home/fritz/RAG_C")
-TAVILY_API_KEY = "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"
+# Load configuration from environment variables or use defaults
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0")
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", os.path.expanduser("~/llms-env/credentials.json"))
+
+BASE_DIR = os.getenv("BASE_DIR", os.path.expanduser("~/RAG_C"))
+INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("~/faiss_index_sf_e5_v1_2"))
+SKIP_INDEXING = os.getenv("SKIP_INDEXING", "True").lower() == "true"
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
+LLM_MODEL = os.getenv("LLM_MODEL", "qwq")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/e5-large-v2")
+
+# Role definitions
+QUESTION_ROLE = "question"
+CONTEXT_ROLE = "context"
+ANSWER_ROLE = "answer"
+COMPLIANCE_ROLE = "compliance"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(os.path.join(BASE_DIR, "rag_processing.log")),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────
-def compute_file_hash(file_path):
-    hash_md5 = hashlib.md5()
-    try:
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-    except Exception as e:
-        logging.error(f"Error reading file {file_path} for hashing: {e}")
-    return hash_md5.hexdigest()
-
-def load_processed_records(record_file):
-    if os.path.exists(record_file):
-        try:
-            with open(record_file, "r") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logging.error(f"Processed record file not found: {record_file}")
-        except json.JSONDecodeError:
-            logging.error(f"Error decoding JSON from {record_file}")
-    return {}
-
-def save_processed_records(records, record_file):
-    with open(record_file, "w") as f:
-        json.dump(records, f, indent=2)
-
-def get_file_paths(base_dir: str):
-    file_paths = []
-    for root, _, files in os.walk(base_dir):
-        for file in files:
-            if file.endswith(".md"):
-                file_paths.append(os.path.join(root, file))
-    return file_paths
-
-def extract_chunks_and_metadata(doc_text, metadata, splitter, file_path):
-    raw_chunks = splitter.split_text(doc_text)
-    aggregated_chunks = []
-    aggregated_metadata = []
-    product_name = metadata.get("tag", os.path.basename(os.path.dirname(file_path)).replace("_", " "))
-    doc_title = metadata.get("title", "")
-    doc_category = metadata.get("category", "")
-    doc_date = metadata.get("date", "")
-    for chunk in raw_chunks:
-        chunk_content = chunk.page_content.strip()
-        chunk_metadata = {
-            "uuid": str(uuid.uuid4()),
-            "title": doc_title,
-            "product": product_name,
-            "category": doc_category,
-            "date": doc_date,
-            "source": file_path,
-            "section": chunk.metadata.get("section", ""),
-            "subsection": chunk.metadata.get("subsection", "")
-        }
-        aggregated_chunks.append(chunk_content)
-        aggregated_metadata.append(chunk_metadata)
-    return aggregated_chunks, aggregated_metadata
-
-def process_file(file_path: str, splitter: MarkdownHeaderTextSplitter, embeddings, faiss_index):
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            post = frontmatter.load(f)
-        doc_text = post.content
-        metadata = post.metadata
-
-        aggregated_chunks, aggregated_metadata = extract_chunks_and_metadata(
-            doc_text, metadata, splitter, file_path
-        )
-
-        num_chunks = len(aggregated_chunks)
-        logging.info(f"File {file_path} split into {num_chunks} chunk(s).")
-
-        if faiss_index is None:
-            logging.info(f"Creating new FAISS index with content from: {file_path}")
-            faiss_index = FAISS.from_texts(aggregated_chunks, embeddings, metadatas=aggregated_metadata)
-        else:
-            faiss_index.add_texts(aggregated_chunks, aggregated_metadata)
-
-        return num_chunks, faiss_index
-
-    except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
-        return 0, faiss_index
-    except frontmatter.FrontmatterError as e:
-        logging.error(f"Frontmatter parsing error in {file_path}: {e}")
-        return 0, faiss_index
-    except Exception as e:
-        logging.error(f"Unexpected error processing file {file_path}: {e}")
-        return 0, faiss_index
-
-def validate_faiss_index(index_dir):
-    # Implement validation logic as needed
-    # For now, just check if the directory exists and contains expected files
-    return os.path.exists(index_dir)
-
+# Improved Prompt Templates with clearer compliance guidelines
 # ────────────────────────────────────────────────────────────────
-def main():
-    logging.info(f"Starting processing of files from: {BASE_DIR}")
-    file_paths = get_file_paths(BASE_DIR)
-    total_files = len(file_paths)
-    logging.info(f"Found {total_files} .md files to process.")
+QUESTION_PROMPT = PromptTemplate.from_template(
+    template="""
+You are a Senior Solution Engineer at Salesforce, with deep expertise in Salesforce products — especially Communications Cloud.
 
-    processed_records = load_processed_records(PROCESSED_RECORD)
-    logging.info(f"Found {len(processed_records)} processed file records.")
+Your task is to answer the following RFI (Request for Information) question using only the provided context and any additional clues from the question. Your response must be:
+- Clear
+- Professional
+- Focused on Salesforce product relevance
 
-    splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[
-        ("#", "title"),
-        ("##", "section"),
-        ("###", "subsection")
-    ])
+---
 
-    logging.info("Initializing local embeddings with intfloat/e5-large-v2...")
-    embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
+❗️**STEP 1: EVALUATE RELEVANCE**
 
-    if SKIP_INDEXING:
-        logging.info("SKIP_INDEXING=True → Loading existing FAISS index only")
-        # Validate the FAISS index file before loading
-        if os.path.exists(INDEX_DIR) and validate_faiss_index(INDEX_DIR):
-            logging.warning(
-                "Loading FAISS index with allow_dangerous_deserialization=True. "
-                "Ensure the index file is from a trusted source!"
-            )
-            faiss_index = FAISS.load_local(INDEX_DIR, embeddings, allow_dangerous_deserialization=True)
-        else:
-            logging.error("FAISS index file is missing or failed validation.")
-            return
-    else:
-        if os.path.exists(INDEX_DIR) and validate_faiss_index(INDEX_DIR):
-            logging.info(f"Loading existing FAISS index from '{INDEX_DIR}'...")
-            logging.warning(
-                "Loading FAISS index with allow_dangerous_deserialization=True. "
-                "Ensure the index file is from a trusted source!"
-            )
-            faiss_index = FAISS.load_local(INDEX_DIR, embeddings, allow_dangerous_deserialization=True)
-        else:
-            faiss_index = None
+First, determine if the question is relevant to Salesforce products or capabilities:
+- Is it about any Salesforce product (Sales Cloud, Service Cloud, Communications Cloud, etc.)?
+- Does it concern business processes, customer engagement, cloud platforms, or integrations?
+- Is it asking about functionality that would be expected in an enterprise CRM/PaaS system?
 
-        processed_files_count = 0
-        total_chunks_processed = 0
+---
 
-        for i, file_path in enumerate(file_paths, start=1):
-            progress = (i / total_files) * 100
-            logging.info(f"Processing file {i}/{total_files} ({progress:.1f}%): {file_path}")
-            file_hash = compute_file_hash(file_path)
+❌ **If the question is NOT relevant to Salesforce, respond ONLY with this exact JSON:**
 
-            if file_path in processed_records and processed_records[file_path] == file_hash:
-                logging.info(f"Skipping already processed file: {file_path}")
-                continue
+{
+  "compliance": "NA",
+  "answer": "This question is not applicable to Salesforce or its product offerings and should be marked as out of scope."
+}
 
-            chunks_processed, faiss_index = process_file(file_path, splitter, embeddings, faiss_index)
-            total_chunks_processed += chunks_processed
-            processed_records[file_path] = file_hash
-            processed_files_count += 1
+Examples of irrelevant (NA) questions:
+- "What do you think about Alexander the Great?"
+- "Is red a better color than green?"
+- "What will the weather be tomorrow?"
+- "Explain gravity"
+- "What is your favorite color?"
 
-            if i % 100 == 0:
-                save_processed_records(processed_records, PROCESSED_RECORD)
-                if faiss_index is not None:
-                    with faiss_index:
-                        faiss_index.save_local(INDEX_DIR, allow_dangerous_deserialization=True)
-                    logging.info(f"FAISS index saved locally to '{INDEX_DIR}'.")
-                logging.info(f"Checkpoint: Processed records and FAISS index updated after {i} files.")
+---
 
-        logging.info(f"Finished indexing. Processed {processed_files_count} new files; Total new chunks: {total_chunks_processed}")
-        save_processed_records(processed_records, PROCESSED_RECORD)
-        if faiss_index is not None:
-            with faiss_index:
-                faiss_index.save_local(INDEX_DIR, allow_dangerous_deserialization=True)
-            logging.info(f"FAISS index saved locally to '{INDEX_DIR}'.")
-        else:
-            logging.error("No FAISS index was created. Exiting.")
-            return
+✅ **If the question IS relevant to Salesforce, proceed to STEP 2.**
 
-    logging.info("Creating retriever from FAISS index...")
-    retriever = faiss_index.as_retriever(search_kwargs={"k": 3})
+---
 
-    logging.info("Loading local LLM using Ollama...")
-    ollama_llm = OllamaLLM(model="gemma3:12b", base_url="http://localhost:11434")
+❗️**STEP 2: DETERMINE COMPLIANCE LEVEL**
 
-    logging.info("Defining Refine prompts...")
-    question_prompt = PromptTemplate.from_template("""
-You are a very Senior Solution Engineer at Salesforce. You have deep expertise in Salesforce products, including configuration, architecture, data modeling, integrations, and best practices.
-You will receive questions from a RFP provided by A1, a leading Communication Service Provider (CSP) in Austria. Therefore focus on Salesforce Communications Cloud and related Salesforce Cloud products.
+Based on the context and your knowledge, determine the compliance level:
 
-Answer the question below using ONLY the context provided.
+1. **FC (Fully Compliant)** - Feature/capability is completely supported by Salesforce out-of-the-box:
+   - Standard functionality without customization
+   - Available in the described product line
+   - Matches all requested criteria
+   
+   Example: "Does Salesforce support case management?" would be FC because Service Cloud has built-in case management.
 
-Instructions:
-- Focus on Salesforce Cloud products (e.g. Communications Cloud, Sales Cloud, Service Cloud).
-- Highlight key benefits and best practices aligned with industry standards.
-- Reference Salesforce documentation or real-world implementations if relevant.
-- Use a professional, solution-oriented tone.
-- Make the answer accessible to both technical and non-technical stakeholders.
-- If the question is out of scope or not applicable, respond with "N/A" and briefly explain why.
+2. **PC (Partially Compliant)** - Feature is supported but with limitations:
+   - Requires configuration, customization, or AppExchange products
+   - Available but doesn't meet all requirements
+   - Requires workarounds or development
+   
+   Example: "Can Salesforce create custom dashboards for network performance?" would be PC because it requires custom development or integration.
+
+3. **NC (Not Compliant)** - Feature is NOT possible in Salesforce:
+   - Fundamentally incompatible with Salesforce architecture
+   - Violates platform limitations or security model
+   - Cannot be achieved even with customization
+   
+   Example: "Can Salesforce replace our network routing hardware?" would be NC because Salesforce is software, not hardware.
+
+4. **NA (Not Applicable)** - Question is out of scope (determined in STEP 1)
+
+---
+
+❗️**STEP 3: FORMAT YOUR RESPONSE**
+
+Respond ONLY in this exact JSON format with no additional text:
+
+{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your concise professional explanation (5-10 sentences)"
+}
+
+---
+
+Final instructions:
+- Your answer must be strictly valid JSON
+- No markdown, commentary, or explanation outside the JSON structure
+- Be precise about compliance level based on the criteria above
+- Do not hedge or be vague about compliance - choose the most appropriate level
 
 Context:
-{context_str}
+{{ context_str }}
 
 Question:
-{question}
+{{ question }}
 
-Answer:
-""")
+Answer (JSON only):
+""",
+    template_format="jinja2"
+)
 
-    refine_prompt = PromptTemplate.from_template("""
-We have provided an existing answer and new additional context. Please refine or expand the original answer only if the new context adds relevant value. Otherwise, return the original answer as-is.
+REFINE_PROMPT = PromptTemplate.from_template(
+    template="""
+We are refining an earlier RFI response based on new context information.
 
-Instructions:
-- Focus on capabilities of Salesforce Cloud products.
-- Be precise, relevant, and avoid repetition.
-- If the question is out of scope or not addressed in the context, respond with "N/A" and briefly explain why.
+Review the existing answer and the new context. Then update the JSON if the new context:
+1. Provides information that changes the compliance level
+2. Adds important details to the answer
+3. Corrects information in the previous answer
 
-Original Question:
-{question}
+Compliance level guidelines:
+- FC (Fully Compliant): Standard out-of-box functionality with no customization
+- PC (Partially Compliant): Requires configuration, customization, or workarounds
+- NC (Not Compliant): Cannot be achieved with Salesforce in any way
+- NA (Not Applicable): Out of scope for Salesforce
 
-Existing Answer:
-{existing_answer}
+Your response must be ONLY valid JSON with this exact structure:
 
-Additional Context:
-{context_str}
+{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your concise professional explanation (5-10 sentences)"
+}
 
-Refined Answer:
-""")
+Important:
+- Do not repeat information unnecessarily
+- Keep the answer concise and focused
+- Return only valid JSON without any explanation text or markdown
+- If the new context doesn't change anything, return the existing answer unchanged
+- Focus on accuracy and clarity
 
-    logging.info("Initializing Tavily Web Search tool...")
-    web_search = TavilySearchResults(k=3, tavily_api_key=TAVILY_API_KEY)
+Question:
+{{ question }}
 
-    logging.info("Building Refine chain...")
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=ollama_llm,
-        retriever=retriever,
-        chain_type="refine",
-        return_source_documents=True,
-        chain_type_kwargs={
-            "question_prompt": question_prompt,
-            "refine_prompt": refine_prompt
-        }
-    )
+Existing JSON Answer:
+{{ existing_answer }}
 
-    #query = "What is the difference between Managed Package and Unmanaged Package in Salesforce? Give me some level of detail, around 10 sentences."
-    #query = "What is the purpose of Industry Order Management as described in these documents? Give me some level of detail, around 10 sentences."
-    query = "In Industry Order Managment (IOM) what is the purpose of a Point of no return (PONT)?"
-    #query = "Explain Email to Case in Service Cloud. Give me some level of detail, around 10 sentences."
-    #query = "Explain Salesforce Flow and how you can model / execute workflows in Salesforce. Give me some level of detail, around 10 sentences."
-    #query = "In Sales Cloud, describe Lead to Opportunity process? Give me some level of detail, around 10 sentences."
-    #query = "What are the options to implement product catalog synchronization from an external source?"
+New Context:
+{{ context_str }}
 
-    logging.info(f"Running query: {query}")
-    result = qa_chain.invoke({"query": query})
-
-    if not result.get("result") or not result.get("source_documents"):
-        logging.info("No relevant RAG content → Falling back to Tavily search...")
-        web_results = web_search.run(query)
-        print("\n--- Web Search Results (Fallback) ---")
-        print(json.dumps(web_results, indent=2))
-    else:
-        print("\n====================================")
-        print("Query:", query)
-        print("Answer:", result["result"])
-        print("====================================")
+Refined Answer (JSON only):
+""",
+    template_format="jinja2"
+)
 
 # ────────────────────────────────────────────────────────────────
+# Google Sheets Utilities
+# ────────────────────────────────────────────────────────────────
+class GoogleSheetHandler:
+    def __init__(self, sheet_id: str, credentials_path: str):
+        """Initialize the Google Sheets Handler."""
+        try:
+            self.client = gspread.service_account(filename=credentials_path)
+            self.sheet = self.client.open_by_key(sheet_id).sheet1
+            logger.info(f"Connected to Google Sheet with ID: {sheet_id}")
+        except Exception as e:
+            logger.critical(f"Failed to connect to Google Sheet: {e}")
+            raise
+
+    def load_data(self) -> Tuple[List[str], List[str], List[List[str]], Any]:
+        """Load data from the Google Sheet."""
+        try:
+            all_values = self.sheet.get_all_values()
+            if len(all_values) < 2:
+                logger.warning("Sheet has insufficient data (less than 2 rows).")
+                return [], [], [], self.sheet
+                
+            headers = all_values[0]
+            roles = all_values[1]
+            rows = all_values[2:] if len(all_values) > 2 else []
+            
+            logger.info(f"Loaded {len(rows)} data rows from Google Sheet.")
+            return headers, roles, rows, self.sheet
+        except Exception as e:
+            logger.error(f"Error loading data from Google Sheet: {e}")
+            raise
+
+    def update_batch(self, updates: List[Dict[str, Any]]):
+        """Update multiple cells in batch mode for better performance."""
+        try:
+            if not updates:
+                return
+                
+            batch_updates = []
+            for update in updates:
+                row, col, value = update["row"], update["col"], update["value"]
+                batch_updates.append({
+                    'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
+                    'values': [[value]]
+                })
+                
+            if batch_updates:
+                self.sheet.batch_update(batch_updates)
+                logger.info(f"Batch updated {len(batch_updates)} cells.")
+        except Exception as e:
+            logger.error(f"Error performing batch update: {e}")
+            raise
+
+def parse_records(headers: List[str], roles: List[str], rows: List[List[str]]) -> List[Dict[str, Any]]:
+    """Parse data from the sheet into structured records."""
+    records = []
+    for i, row in enumerate(rows):
+        row_dict = {headers[j]: row[j] if j < len(row) else "" for j in range(len(headers))}
+        role_map = {roles[j]: row[j] if j < len(row) else "" for j in range(len(roles))}
+        records.append({
+            "raw": row_dict,
+            "roles": role_map,
+            "sheet_row": i + 3  # +3 due to header and role rows
+        })
+    return records
+
+def find_output_columns(roles: List[str]) -> Dict[str, int]:
+    """Find columns for output values based on the role row."""
+    role_map = {}
+    for idx, role in enumerate(roles):
+        role_lower = role.strip().lower()
+        if role_lower in (ANSWER_ROLE, COMPLIANCE_ROLE):
+            role_map[role_lower] = idx + 1  # +1 due to 1-based index in gspread
+    
+    if not role_map:
+        logger.warning(f"No output columns found for roles: {ANSWER_ROLE}, {COMPLIANCE_ROLE}")
+        
+    return role_map
+
+# ────────────────────────────────────────────────────────────────
+# FAISS Retriever
+# ────────────────────────────────────────────────────────────────
+def load_faiss_index(index_dir: str):
+    """Load the FAISS index from disk."""
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        if SKIP_INDEXING:
+            if os.path.exists(index_dir):
+                logger.info(f"Loading FAISS index from {index_dir}...")
+                return FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
+            else:
+                logger.critical(f"FAISS index not found at: {index_dir}")
+                raise FileNotFoundError(f"FAISS index not found at {index_dir}")
+        else:
+            raise NotImplementedError("Indexing is currently disabled. Set SKIP_INDEXING=True to use existing index.")
+    except Exception as e:
+        logger.error(f"Error loading FAISS index: {e}")
+        raise
+
+# ────────────────────────────────────────────────────────────────
+# LLM Output Processing
+# ────────────────────────────────────────────────────────────────
+def extract_json_from_llm_response(response: str) -> Dict[str, str]:
+    """
+    Extracts JSON from the LLM response with improved robustness.
+    Uses multiple strategies to find and parse valid JSON.
+    Returns a default dictionary if no valid JSON is found.
+    """
+    default_result = {
+        "answer": response.strip(),
+        "compliance": "PC"  # Default compliance
+    }
+    
+    # Try different strategies to extract JSON
+    try:
+        # Strategy 1: Direct JSON parsing of the whole response
+        try:
+            parsed = json.loads(response.strip())
+            if "answer" in parsed and "compliance" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Look for JSON within code blocks
+        cleaned = response.strip()
+        code_block_pattern = r"```(?:json)?(.*?)```"
+        matches = re.findall(code_block_pattern, cleaned, re.DOTALL)
+        
+        for match in matches:
+            try:
+                parsed = json.loads(match.strip())
+                if "answer" in parsed and "compliance" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # Strategy 3: Look for { } patterns
+        json_pattern = r"\{.*?\}"
+        matches = re.findall(json_pattern, cleaned, re.DOTALL)
+        
+        for match in matches:
+            try:
+                parsed = json.loads(match.strip())
+                if "answer" in parsed and "compliance" in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # Strategy 4: Try to clean up the response by removing common prefixes/suffixes
+        for prefix in ['```json', '```']:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+        for suffix in ['```']:
+            if cleaned.endswith(suffix):
+                cleaned = cleaned[:-len(suffix)]
+        
+        # Try one more time with the cleaned text
+        try:
+            parsed = json.loads(cleaned.strip())
+            if "answer" in parsed and "compliance" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+            
+    except Exception as e:
+        logger.warning(f"All JSON extraction strategies failed: {e}")
+    
+    # If we still don't have valid JSON, check if we can determine compliance from text
+    compliance_indicators = {
+        "NA": ["not applicable", "out of scope", "irrelevant", "not relevant"],
+        "NC": ["not compliant", "not possible", "cannot be achieved", "not supported"],
+        "FC": ["fully compliant", "standard functionality", "out of the box", "built-in"],
+        "PC": ["partially compliant", "customization", "configuration", "workaround"]
+    }
+    
+    response_lower = response.lower()
+    determined_compliance = None
+    
+    for compliance, indicators in compliance_indicators.items():
+        if any(indicator in response_lower for indicator in indicators):
+            determined_compliance = compliance
+            break
+    
+    if determined_compliance:
+        default_result["compliance"] = determined_compliance
+    
+    return default_result
+
+def validate_compliance_value(value: str) -> str:
+    """
+    Ensures compliance value is valid.
+    Maps variations to standard forms.
+    """
+    valid_values = ["FC", "PC", "NC", "NA"]
+    
+    # Normalize value
+    clean_value = value.strip().upper()
+    
+    # Check for exact matches
+    if clean_value in valid_values:
+        return clean_value
+    
+    # Map variations to standards
+    if clean_value in ["FULLY COMPLIANT", "FULLY-COMPLIANT"]:
+        return "FC"
+    elif clean_value in ["PARTIALLY COMPLIANT", "PARTIALLY-COMPLIANT"]:
+        return "PC"
+    elif clean_value in ["NOT COMPLIANT", "NON COMPLIANT", "NON-COMPLIANT"]:
+        return "NC"
+    elif clean_value in ["NOT APPLICABLE", "N/A"]:
+        return "NA"
+    
+    # Default to PC if no match
+    logger.warning(f"Invalid compliance value: '{value}', defaulting to 'PC'")
+    return "PC"
+
+# ────────────────────────────────────────────────────────────────
+# Main Execution
+# ────────────────────────────────────────────────────────────────
+def main():
+    try:
+        logger.info("Starting RAG processing...")
+        
+        # Load Google Sheet
+        sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
+        headers, roles, rows, sheet = sheet_handler.load_data()
+        records = parse_records(headers, roles, rows)
+        output_columns = find_output_columns(roles)
+        
+        if not output_columns:
+            logger.error("No output columns found. Exiting.")
+            return
+            
+        # Initialize FAISS and LLM
+        try:
+            retriever = load_faiss_index(INDEX_DIR).as_retriever(search_kwargs={"k": 10})
+            llm = OllamaLLM(model=LLM_MODEL, base_url=LLM_BASE_URL)
+            
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                retriever=retriever,
+                chain_type="refine",
+                input_key="question",
+                return_source_documents=True,
+                chain_type_kwargs={
+                    "question_prompt": QUESTION_PROMPT,
+                    "refine_prompt": REFINE_PROMPT
+                }
+            )
+        except Exception as e:
+            logger.critical(f"Failed to initialize retriever or LLM: {e}")
+            return
+        
+        # Batch process records
+        batch_updates = []
+        
+        for i, record in enumerate(records):
+            row_num = record["sheet_row"]
+            question = record["roles"].get(QUESTION_ROLE, "").strip()
+            
+            if not question:
+                logger.warning(f"⏭️ Row {row_num} skipped: No question found.")
+                continue
+                
+            # Process additional context
+            additional_context = "\n".join([
+                f"{k}: {v}" for k, v in record["roles"].items()
+                if k.strip().lower() == CONTEXT_ROLE and v.strip()
+            ]).strip() or "N/A"
+            
+            enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
+            
+            try:
+                # Get LLM response
+                result = qa_chain.invoke({"question": enriched_question})
+                raw_answer = result["result"].strip()
+                
+                # Parse JSON response
+                parsed = extract_json_from_llm_response(raw_answer)
+                answer_text = parsed.get("answer", "")
+                compliance_value = validate_compliance_value(parsed.get("compliance", "PC"))
+                
+                # Collect updates for batch processing
+                for role, col in output_columns.items():
+                    if role == ANSWER_ROLE:
+                        batch_updates.append({"row": row_num, "col": col, "value": answer_text})
+                    elif role == COMPLIANCE_ROLE:
+                        batch_updates.append({"row": row_num, "col": col, "value": compliance_value})
+                
+                # Execute batch updates when batch size is reached or final record
+                if len(batch_updates) >= BATCH_SIZE or i == len(records) - 1:
+                    sheet_handler.update_batch(batch_updates)
+                    batch_updates = []
+                
+                logger.info(f"✅ Row {row_num} processed - Compliance: {compliance_value}")
+                
+                # Print summary for current record
+                print("\n" + "=" * 40)
+                print(f"✅ Row {row_num} complete")
+                print(f"Question: {question}")
+                print(f"Answer: {answer_text}")
+                print(f"Compliance: {compliance_value}")
+                print("=" * 40)
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to process row {row_num}: {e}")
+        
+        logger.info("RAG processing completed successfully.")
+        
+    except Exception as e:
+        logger.critical(f"Critical error in main execution: {e}")
+
 if __name__ == "__main__":
     main()
