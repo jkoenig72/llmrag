@@ -2,19 +2,17 @@ import os
 import re
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional, Tuple
+import unicodedata
 import gspread
 from dotenv import load_dotenv
-from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
-# ────────────────────────────────────────────────────────────────
-# Configuration
-# ────────────────────────────────────────────────────────────────
 load_dotenv()
 
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0")
@@ -32,6 +30,8 @@ CONTEXT_ROLE = "context"
 ANSWER_ROLE = "answer"
 COMPLIANCE_ROLE = "compliance"
 
+API_THROTTLE_DELAY = 1
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -42,9 +42,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ────────────────────────────────────────────────────────────────
-# Prompt Templates
-# ────────────────────────────────────────────────────────────────
+SUMMARY_PROMPT = PromptTemplate.from_template(
+    template="""
+You are an experienced technical writer specialized in summarizing technical documentation.
+Your task is to summarize the following document text into a concise and professional paragraph:
+- Ensure key technical and business points are retained
+- The summary should be targeted toward an audience of engineers and technical managers
+---
+
+Original Text:
+{{ text }}
+
+Summary:
+""",
+    template_format="jinja2"
+)
+
 QUESTION_PROMPT = PromptTemplate.from_template(
     template="""
 You are a Senior Solution Engineer at Salesforce, with deep expertise in Salesforce products — especially Communications Cloud.
@@ -97,7 +110,6 @@ Context:
 
 Question:
 {{ question }}
-
 Answer (JSON only):
 """,
     template_format="jinja2"
@@ -138,9 +150,6 @@ Refined Answer (JSON only):
     template_format="jinja2"
 )
 
-# ────────────────────────────────────────────────────────────────
-# Google Sheets Utilities
-# ────────────────────────────────────────────────────────────────
 class GoogleSheetHandler:
     def __init__(self, sheet_id: str, credentials_path: str):
         try:
@@ -210,9 +219,6 @@ def find_output_columns(roles: List[str]) -> Dict[str, int]:
         logger.warning(f"No output columns found for roles: {ANSWER_ROLE}, {COMPLIANCE_ROLE}")
     return role_map
 
-# ────────────────────────────────────────────────────────────────
-# FAISS Retriever
-# ────────────────────────────────────────────────────────────────
 def load_faiss_index(index_dir: str):
     try:
         embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -229,9 +235,6 @@ def load_faiss_index(index_dir: str):
         logger.error(f"Error loading FAISS index: {e}")
         raise
 
-# ────────────────────────────────────────────────────────────────
-# LLM Output Processing
-# ────────────────────────────────────────────────────────────────
 def extract_json_from_llm_response(response: str) -> Dict[str, str]:
     default_result = {
         "answer": response.strip(),
@@ -315,22 +318,86 @@ def validate_compliance_value(value: str) -> str:
     logger.warning(f"Invalid compliance value: '{value}', defaulting to 'PC'")
     return "PC"
 
-# ────────────────────────────────────────────────────────────────
-# Main Execution
-# ────────────────────────────────────────────────────────────────
+def clean_text(raw_text: str) -> str:
+    clean_text = raw_text.strip()
+    clean_text = re.sub(r'\s+', ' ', clean_text)
+    clean_text = unicodedata.normalize('NFKD', clean_text).encode('ascii', 'ignore').decode()
+    clean_text = ''.join(c for c in clean_text if c.isprintable())
+    clean_text = re.sub(r'[^\w\s,.!?]', '', clean_text)
+    return clean_text
+
+def clean_up_cells(records):
+    for record in records:
+        for role, text in record["roles"].items():
+            if role in (QUESTION_ROLE, CONTEXT_ROLE):  # Process both question and context roles
+                original_text = text
+                cleaned_text = clean_text(text)
+                record["roles"][role] = cleaned_text
+                
+                # Print before and after for debugging
+                print(f"Before cleaning (Row {record['sheet_row']}, Role: {role}):\n{original_text}")
+                print(f"After cleaning (Row {record['sheet_row']}, Role: {role}):\n{cleaned_text}")
+                
+                if cleaned_text != original_text:
+                    logger.info(f"Cleaned text for role: {role} in row: {record['sheet_row']}")
+                    time.sleep(API_THROTTLE_DELAY)
+
+def update_cleaned_records(sheet_handler, records, headers):
+    """Update the Google Sheet with cleaned records."""
+    updates = []
+    for record in records:
+        row_num = record["sheet_row"]
+        for role, text in record["roles"].items():
+            if role in (QUESTION_ROLE, CONTEXT_ROLE):  # Update specific roles
+                try:
+                    col_index = headers.index(role) + 1  # Find column index
+                    updates.append({'row': row_num, 'col': col_index, 'value': text})
+                except ValueError:
+                    logger.error(f"Column {role} not found in headers, skipping update.")
+                    continue
+
+    # Perform batch update to Google Sheet
+    sheet_handler.update_batch(updates)
+
+def summarize_long_texts(records, llm):
+    for record in records:
+        for role, text in record["roles"].items():
+            if len(text.split()) > 200:
+                try:
+                    print(f"Summarizing text for role: {role}")
+                    summary = generate_summary(text, llm)
+                    record["roles"][role] = summary
+                    logger.info(f"Text for role '{role}' was summarized.")
+                except Exception as e:
+                    logger.error(f"Failed to generate summary for text in role '{role}': {e}")
+
+def generate_summary(text, llm):
+    result = llm.complete(prompt=SUMMARY_PROMPT, inputs={"text": text})
+    summary_text = result["result"].strip()
+    return summary_text
+
 def main():
     try:
         logger.info("Starting RAG processing...")
         sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
         headers, roles, rows, sheet = sheet_handler.load_data()
+        llm = OllamaLLM(model=LLM_MODEL, base_url=LLM_BASE_URL)
+
         records = parse_records(headers, roles, rows)
+
+        #clean_up_cells(records)
+        #Update the cleaned data back to Google Sheet
+        #update_cleaned_records(sheet_handler, records)
+
+        #summarize_long_texts(records, llm)
+        
+        
         output_columns = find_output_columns(roles)
         if not output_columns:
             logger.error("No output columns found. Exiting.")
             return
 
         retriever = load_faiss_index(INDEX_DIR).as_retriever(search_kwargs={"k": 6})
-        llm = OllamaLLM(model=LLM_MODEL, base_url=LLM_BASE_URL)
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=retriever,
@@ -346,15 +413,15 @@ def main():
         batch_updates = []
         for i, record in enumerate(records):
             row_num = record["sheet_row"]
-            question = record["roles"].get(QUESTION_ROLE, "").strip()
+            question = clean_text(record["roles"].get(QUESTION_ROLE, ""))
+            additional_context = clean_text("\n".join([
+                f"{k}: {v}" for k, v in record["roles"].items()
+                if k.strip().lower() == CONTEXT_ROLE and v.strip()
+            ]).strip() or "N/A")
+
             if not question:
                 logger.warning(f"⏭️ Row {row_num} skipped: No question found.")
                 continue
-
-            additional_context = "\n".join([
-                f"{k}: {v}" for k, v in record["roles"].items()
-                if k.strip().lower() == CONTEXT_ROLE and v.strip()
-            ]).strip() or "N/A"
 
             enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
 
