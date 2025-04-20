@@ -2,12 +2,13 @@ import logging
 import os
 from collections import defaultdict
 
-from config import BASE_OUTPUT_FOLDER
+from config import BASE_OUTPUT_FOLDER, MAX_LINK_LEVEL
 from file_utils import save_summary
 
 # Set up logging
 def setup_logging():
     """Set up logging configuration."""
+    os.makedirs(BASE_OUTPUT_FOLDER, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO, 
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -18,8 +19,8 @@ def setup_logging():
     )
     return logging.getLogger(__name__)
 
-def summarize_md_counts():
-    """Scan the output folder and count markdown files by product."""
+def summarize_md_counts(product_metrics=None):
+    """Scan the output folder and count markdown files by product, and summarize metrics."""
     summary_counts = defaultdict(int)
     logger = logging.getLogger(__name__)
     
@@ -35,6 +36,18 @@ def summarize_md_counts():
         logger.info("\n📊 Crawl Summary:")
         for product, count in summary_counts.items():
             logger.info(f"  - {product}: {count} markdown files")
+            
+            # Add metrics if available
+            if product_metrics and product in product_metrics:
+                metrics = product_metrics[product]
+                logger.info(f"    • Links found: {metrics['links_found']}")
+                logger.info(f"    • Links processed: {metrics['links_processed']}")
+                logger.info(f"    • Links skipped (duplicate): {metrics['links_skipped_duplicate']}")
+                logger.info(f"    • Links skipped (filter): {metrics['links_skipped_filter']}")
+                logger.info(f"    • Links skipped (error): {metrics['links_skipped_error']}")
+                logger.info(f"    • Max depth reached: {metrics['max_depth_reached']}/{MAX_LINK_LEVEL}")
+                logger.info(f"    • Reached MAX_PAGES_PER_PRODUCT: {metrics['reached_max_pages']}")
+                logger.info(f"    • Reached MAX_LINK_LEVEL: {metrics['reached_max_depth']}")
             
         save_summary(BASE_OUTPUT_FOLDER, summary_counts)
         return summary_counts

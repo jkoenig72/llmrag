@@ -1,5 +1,6 @@
 import os
 import threading
+import queue
 import logging
 from collections import defaultdict
 
@@ -16,21 +17,35 @@ def main():
     logger = setup_logging()
     logger.info("Starting Salesforce documentation scraper")
     
-    # Launch a thread for each product
+    # Launch a thread for each product and store metrics
     threads = []
-    for info in START_LINKS:
-        logger.info(f"Starting thread for {info['product']}")
-        t = threading.Thread(target=process_link_bfs, args=(info,))
-        t.start()
-        threads.append(t)
+    product_metrics = {}
     
-    # Wait for all threads to complete
-    for t in threads:
+    for info in START_LINKS:
+        product = info['product']
+        logger.info(f"Starting thread for {product}")
+        
+        # Create a result queue for each thread
+        result_queue = queue.Queue()
+        t = threading.Thread(
+            target=lambda q, arg: q.put(process_link_bfs(arg)),
+            args=(result_queue, info)
+        )
+        t.start()
+        threads.append((t, result_queue, product))
+    
+    # Wait for all threads to complete and collect metrics
+    for t, result_queue, product in threads:
         t.join()
+        try:
+            metrics = result_queue.get(block=False)
+            product_metrics[product] = metrics
+        except queue.Empty:
+            logger.error(f"No metrics returned for {product}")
     
     # Summarize results
     logger.info("Crawling complete. Generating summary...")
-    summarize_md_counts()
+    summarize_md_counts(product_metrics)
     logger.info("Scraping completed successfully")
 
 if __name__ == "__main__":
