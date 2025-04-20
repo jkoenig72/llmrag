@@ -3,17 +3,33 @@ import time
 import logging
 import unicodedata
 from typing import Dict, List, Any
+from config import MAX_WORDS_BEFORE_SUMMARY
 
 logger = logging.getLogger(__name__)
 
 def clean_text(raw_text: str) -> str:
     """Clean and normalize text by removing special characters and extra whitespace."""
-    clean_text = raw_text.strip()
-    clean_text = re.sub(r'\s+', ' ', clean_text)
-    clean_text = unicodedata.normalize('NFKD', clean_text).encode('ascii', 'ignore').decode()
-    clean_text = ''.join(c for c in clean_text if c.isprintable())
-    clean_text = re.sub(r'[^\w\s,.!?]', '', clean_text)
-    return clean_text
+    original = raw_text
+
+    # Trim and normalize whitespace
+    clean = raw_text.strip()
+    clean = re.sub(r'[\u2022\u2023\u25E6\u2043\u2219\-\*]+', ',', clean)  # Replace bullets/dashes with comma
+    clean = re.sub(r'\s+', ' ', clean)  # Collapse all whitespace
+
+    # Normalize Unicode (e.g., é -> e)
+    clean = unicodedata.normalize('NFKD', clean).encode('ascii', 'ignore').decode()
+
+    # Strip non-printables
+    clean = ''.join(c for c in clean if c.isprintable())
+
+    # Remove excessive punctuation (e.g., "!!!", "....")
+    clean = re.sub(r'[!?.,]{2,}', lambda m: m.group(0)[0], clean)
+
+    # Final pass: remove remaining strange symbols except standard ones
+    clean = re.sub(r'[^\w\s,.!?]', '', clean)
+
+    logger.debug("Cleaned text (first 100 chars):\nBefore: %s\nAfter: %s", original[:100], clean[:100])
+    return clean
 
 def clean_up_cells(records, question_role, context_role, api_throttle_delay=1):
     """Clean text in specific roles for all records."""
@@ -23,29 +39,31 @@ def clean_up_cells(records, question_role, context_role, api_throttle_delay=1):
                 original_text = text
                 cleaned_text = clean_text(text)
                 record["roles"][role] = cleaned_text
-                
+
                 # Print before and after for debugging
                 print(f"Before cleaning (Row {record['sheet_row']}, Role: {role}):\n{original_text}")
                 print(f"After cleaning (Row {record['sheet_row']}, Role: {role}):\n{cleaned_text}")
-                
+
                 if cleaned_text != original_text:
                     logger.info(f"Cleaned text for role: {role} in row: {record['sheet_row']}")
                     time.sleep(api_throttle_delay)
 
 def generate_summary(text, llm, summary_prompt):
     """Generate a summary of the given text using the LLM."""
-    result = llm.complete(prompt=summary_prompt, inputs={"text": text})
-    summary_text = result["result"].strip()
-    return summary_text
+    formatted_prompt = summary_prompt.format(text=text)
+    print("\n--- Prompt Sent to LLM ---\n", formatted_prompt, "\n-------------------------\n")
+    result = llm.invoke(formatted_prompt)
+    return result.strip()
 
-def summarize_long_texts(records, llm, summary_prompt, word_limit=200):
-    """Summarize texts that are longer than the specified word limit."""
+def summarize_long_texts(records, llm, summary_prompt, word_limit=MAX_WORDS_BEFORE_SUMMARY):
+    """Summarize texts that are longer than the specified word limit and print before/after."""
     for record in records:
         for role, text in record["roles"].items():
             if len(text.split()) > word_limit:
                 try:
-                    print(f"Summarizing text for role: {role}")
+                    print(f"\n[SUMMARY] Row {record['sheet_row']}, Role: {role}\nBefore:\n{text}\n")
                     summary = generate_summary(text, llm, summary_prompt)
+                    print(f"After:\n{summary}\n")
                     record["roles"][role] = summary
                     logger.info(f"Text for role '{role}' was summarized.")
                 except Exception as e:

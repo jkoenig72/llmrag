@@ -1,3 +1,4 @@
+from config import MAX_WORDS_BEFORE_SUMMARY
 from langchain.prompts import PromptTemplate
 
 SUMMARY_PROMPT = PromptTemplate.from_template(
@@ -6,6 +7,7 @@ You are an experienced technical writer specialized in summarizing technical doc
 Your task is to summarize the following document text into a concise and professional paragraph:
 - Ensure key technical and business points are retained
 - The summary should be targeted toward an audience of engineers and technical managers
+- Keep the summary under {{ MAX_WORDS_BEFORE_SUMMARY }} words
 ---
 
 Original Text:

@@ -9,10 +9,11 @@ from langchain.chains import RetrievalQA
 from config import (
     GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE, BASE_DIR, INDEX_DIR, 
     SKIP_INDEXING, BATCH_SIZE, LLM_MODEL, LLM_BASE_URL, EMBEDDING_MODEL,
-    QUESTION_ROLE, CONTEXT_ROLE, ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY
+    QUESTION_ROLE, CONTEXT_ROLE, ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY,
+    CLEAN_UP_CELL_CONTENT, SUMMARIZE_LONG_CELLS
 )
 from prompts import SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT
-from sheets_handler import GoogleSheetHandler, parse_records, find_output_columns, update_cleaned_records
+from sheets_handler import GoogleSheetHandler, parse_records, find_output_columns
 from text_processing import clean_text, clean_up_cells, summarize_long_texts
 from llm_utils import load_faiss_index, extract_json_from_llm_response, validate_compliance_value
 
@@ -36,11 +37,14 @@ def main():
 
         records = parse_records(headers, roles, rows)
 
-        # Text cleaning and summarization (commented out for now)
-        # clean_up_cells(records, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
-        # update_cleaned_records(sheet_handler, records, headers, QUESTION_ROLE, CONTEXT_ROLE)
-        # summarize_long_texts(records, llm, SUMMARY_PROMPT)
-        
+        if CLEAN_UP_CELL_CONTENT:
+            clean_up_cells(records, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
+            sheet_handler.update_cleaned_records(records, roles, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
+
+        if SUMMARIZE_LONG_CELLS:
+            summarize_long_texts(records, llm, SUMMARY_PROMPT)
+            sheet_handler.update_cleaned_records(records, roles, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
+
         output_columns = find_output_columns(roles, ANSWER_ROLE, COMPLIANCE_ROLE)
         if not output_columns:
             logger.error("No output columns found. Exiting.")
@@ -63,10 +67,10 @@ def main():
         for i, record in enumerate(records):
             row_num = record["sheet_row"]
             question = clean_text(record["roles"].get(QUESTION_ROLE, ""))
-            additional_context = clean_text("\n".join([
-                f"{k}: {v}" for k, v in record["roles"].items()
+            additional_context = "\n".join([
+                f"{k}: {clean_text(v)}" for k, v in record["roles"].items()
                 if k.strip().lower() == CONTEXT_ROLE and v.strip()
-            ]).strip() or "N/A")
+            ]).strip() or "N/A"
 
             if not question:
                 logger.warning(f"⏭️ Row {row_num} skipped: No question found.")
