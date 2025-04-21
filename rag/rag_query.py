@@ -4,6 +4,7 @@ Handles retrieving relevant documents and generating responses.
 """
 import os
 import json
+import re
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_community.vectorstores import FAISS
@@ -12,6 +13,9 @@ import numpy as np
 import faiss
 
 import config
+
+# Import the response parser
+from response_parser import parse_and_fix_json_response
 
 
 def get_index_info(index_dir: str) -> dict:
@@ -171,12 +175,54 @@ def direct_llm_query(question: str = None):
     
     # Generate direct prompt without context
     prompt = f"""
-You are a Senior Solution Engineer at Salesforce. Answer the following question to the best of your knowledge.
+You are a Senior Solution Engineer at Salesforce, with deep expertise in Salesforce products — especially Communications Cloud.
+
+Your task is to answer the following RFI (Request for Information) question to the best of your knowledge. Your response must be:
+- Clear
+- Professional
+- Focused on Salesforce product relevance
+
+---
+
+❗️**STEP 1: EVALUATE RELEVANCE**
+
+Is the question relevant to Salesforce?
+- About any Salesforce product (Sales Cloud, Service Cloud, Communications Cloud, etc.)?
+- Concerning business processes, customer engagement, cloud platforms, or integrations?
+
+❌ **If NOT relevant**, respond ONLY with:
+{{
+  "compliance": "NA",
+  "answer": "This question is not applicable to Salesforce or its product offerings and should be marked as out of scope."
+}}
+
+---
+
+✅ **If relevant, continue to STEP 2.**
+
+❗️**STEP 2: DETERMINE COMPLIANCE LEVEL**
+
+1. **FC (Fully Compliant)** - Supported via standard configuration or UI-based setup
+   - No custom code required (e.g., Flow, page layouts, permissions, validation rules are NOT custom code)
+
+2. **PC (Partially Compliant)** - Requires custom development (Apex, LWC, APIs, external integrations)
+
+3. **NC (Not Compliant)** - Not possible in Salesforce even with customization
+
+4. **NA (Not Applicable)** - Determined in Step 1
+
+---
+
+❗️**STEP 3: FORMAT**
+Return ONLY:
+{{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your concise professional explanation (5–10 sentences)"
+}}
 
 Question:
 {question}
-
-Answer:
+Answer (JSON only):
 """
 
     # Generate response
@@ -217,8 +263,9 @@ def test_query(index_dir: str, custom_question: str = None):
         print("⚠️ Using CPU for vector search (could not detect GPU status)")
 
     vectorstore = FAISS.load_local(index_dir, embeddings, allow_dangerous_deserialization=True)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    llm = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_URL)
+    # Increase the number of documents to retrieve for more context
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    llm = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_URL, temperature=0.2)
 
     # Use custom question if provided, otherwise use default
     question = custom_question or "How does Salesforce Communications Cloud handle product bundling?"
@@ -235,7 +282,55 @@ def test_query(index_dir: str, custom_question: str = None):
 
     # Generate prompt with context
     prompt = f"""
-You are a Senior Solution Engineer at Salesforce. Answer the following question using only the context provided.
+You are a Senior Solution Engineer at Salesforce, with deep expertise in Salesforce products — especially Communications Cloud.
+
+Your task is to answer the following RFI (Request for Information) question using the provided context and any additional clues from the question. 
+
+THE FORMAT OF YOUR RESPONSE IS CRITICAL. YOU MUST RETURN A JSON OBJECT WITH BOTH "compliance" AND "answer" FIELDS.
+
+---
+
+❗️**STEP 1: EVALUATE RELEVANCE**
+
+Is the question relevant to Salesforce?
+- About any Salesforce product (Sales Cloud, Service Cloud, Communications Cloud, etc.)?
+- Concerning business processes, customer engagement, cloud platforms, or integrations?
+
+❌ **If NOT relevant**, respond ONLY with:
+{{
+  "compliance": "NA",
+  "answer": "This question is not applicable to Salesforce or its product offerings and should be marked as out of scope."
+}}
+
+---
+
+✅ **If relevant, continue to STEP 2.**
+
+❗️**STEP 2: DETERMINE COMPLIANCE LEVEL**
+
+Carefully analyze the context to determine:
+
+1. **FC (Fully Compliant)** - Supported via standard configuration or UI-based setup
+   - No custom code required (e.g., Flow, page layouts, permissions, validation rules are NOT custom code)
+
+2. **PC (Partially Compliant)** - Requires custom development (Apex, LWC, APIs, external integrations)
+
+3. **NC (Not Compliant)** - Not possible in Salesforce even with customization
+
+4. **NA (Not Applicable)** - Determined in Step 1
+
+IMPORTANT: Even if the context doesn't explicitly state the compliance level, use your judgment to determine it based on the implementation details described.
+
+---
+
+❗️**STEP 3: FORMAT RESPONSE**
+YOU MUST INCLUDE BOTH FIELDS IN YOUR RESPONSE:
+{{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Your detailed explanation (8-10 sentences minimum)"
+}}
+
+CRITICAL INSTRUCTION: Always include both the compliance field and the answer field in your JSON response. NEVER OMIT THE COMPLIANCE FIELD.
 
 Context:
 {context}
@@ -243,16 +338,19 @@ Context:
 Question:
 {question}
 
-Answer:
+Answer (JSON only with both compliance and answer fields):
 """
 
     # Generate response
     response = llm.invoke(prompt)
     
+    # Parse and fix the response to ensure it has the required fields
+    fixed_response = parse_and_fix_json_response(response)
+    
     # Print results
     print("\n" + "=" * 40)
     print(f"Question: {question}")
-    print(f"Answer: {response}")
+    print(f"RAG-Enhanced Answer: {fixed_response}")
     print("=" * 40)
     
     # Return relevant documents for potential further analysis

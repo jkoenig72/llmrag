@@ -1,4 +1,28 @@
-## Performance Optimization
+## Examples
+
+### RAG Query Example (with document context)
+
+```bash
+python main.py --target /home/fritz/FAISSIndexV2 --skip-indexing --test-query --question "Describe the Order Management functionality in your solution."
+```
+
+This queries the LLM with relevant context from your indexed documents, providing an accurate, document-based answer.
+
+### Direct LLM Query Example (without document context)
+
+```bash
+python main.py --target /home/fritz/FAISSIndexV2 --skip-indexing --test-query --direct-llm --question "Describe the Order Management functionality in your solution."
+```
+
+This queries the LLM directly without document context, relying only on the model's built-in knowledge.
+
+### Comparing Both Approaches
+
+```bash
+python main.py --target /home/fritz/FAISSIndexV2 --skip-indexing --test-query --direct-llm --question "Describe the Order Management functionality in your solution."
+```
+
+This runs both query types with the same question, allowing you to compare how document context improves the response.## Performance Optimization
 
 For optimal performance with large indices, it's highly recommended to use the GPU-accelerated version of FAISS:
 
