@@ -13,17 +13,38 @@ import config
 
 
 def slugify(text: str) -> str:
-    """Convert text to a URL-friendly slug format."""
+    """Convert text to a URL-friendly slug format.
+    
+    Args:
+        text: The input text to convert to a slug
+        
+    Returns:
+        A lowercase string with non-alphanumeric characters replaced by hyphens
+    """
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
 
 
 def hash_file_content(content: str) -> str:
-    """Generate a SHA-256 hash for the given content."""
+    """Generate a SHA-256 hash for the given content.
+    
+    Args:
+        content: The text content to hash
+        
+    Returns:
+        A hexadecimal string representation of the SHA-256 hash
+    """
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def load_processed_hashes() -> Set[str]:
-    """Load the set of already processed file hashes."""
+    """Load the set of already processed file hashes.
+    
+    Reads the hash tracker file to determine which files have already
+    been processed and indexed.
+    
+    Returns:
+        A set of hash strings for previously processed files
+    """
     if os.path.exists(config.PROCESSED_HASHES_TRACKER):
         with open(config.PROCESSED_HASHES_TRACKER, "r") as f:
             return set(line.strip() for line in f if line.strip())
@@ -31,13 +52,27 @@ def load_processed_hashes() -> Set[str]:
 
 
 def save_processed_hash(hash_value: str) -> None:
-    """Save a processed file hash to the tracker."""
+    """Save a processed file hash to the tracker.
+    
+    Args:
+        hash_value: The hash value to add to the tracker file
+    """
     with open(config.PROCESSED_HASHES_TRACKER, "a") as f:
         f.write(hash_value + "\n")
 
 
 def count_files_by_product(source_dir: str) -> Dict[str, int]:
-    """Count the total number of markdown files by product directory."""
+    """Count the total number of markdown files by product directory.
+    
+    Walks through the source directory structure and counts markdown
+    files in each product subdirectory.
+    
+    Args:
+        source_dir: Root directory containing product subdirectories with markdown files
+        
+    Returns:
+        A dictionary mapping product names to file counts, with a "Total" key for the overall count
+    """
     product_counts = {}
     total_files = 0
     
@@ -53,7 +88,18 @@ def count_files_by_product(source_dir: str) -> Dict[str, int]:
 
 
 def estimate_completion_time(files_processed: int, total_files: int, elapsed_time: float) -> str:
-    """Estimate the time remaining to complete processing."""
+    """Estimate the time remaining to complete processing.
+    
+    Calculates an estimated completion time based on the current processing rate.
+    
+    Args:
+        files_processed: Number of files processed so far
+        total_files: Total number of files to process
+        elapsed_time: Time elapsed in seconds
+        
+    Returns:
+        A human-readable string describing the estimated remaining time
+    """
     if files_processed == 0:
         return "Unknown"
     
@@ -76,7 +122,14 @@ def estimate_completion_time(files_processed: int, total_files: int, elapsed_tim
 
 
 def print_skip_summary(skip_summary: Dict) -> None:
-    """Print a detailed summary of skipped files and errors."""
+    """Print a detailed summary of skipped files and errors.
+    
+    Generates a formatted report of files that were skipped during processing
+    and the reasons for skipping them.
+    
+    Args:
+        skip_summary: A dictionary containing skip reasons and corresponding file lists
+    """
     print("\n📝 Skip and Error Summary:")
     
     # Print skip reasons

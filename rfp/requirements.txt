@@ -1,0 +1,25 @@
+# Google Sheets Integration
+gspread>=5.10.0
+google-auth>=2.22.0
+
+# LangChain and Components
+langchain>=0.0.267
+langchain-ollama>=0.0.1
+langchain-huggingface>=0.0.1
+langchain-community>=0.0.10
+
+# Vector Store
+faiss-cpu>=1.7.4  # Use faiss-gpu if GPU is available
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Text Processing and Utilities
+unicodedata2>=15.0.0
+tenacity>=8.2.2  # For implementing retry logic
+
+# Embedding Models
+sentence-transformers>=2.2.2  # For HuggingFace embeddings
+
+# Logging and Formatting
+rich>=13.4.2  # Optional: For better console output

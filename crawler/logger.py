@@ -5,9 +5,16 @@ from collections import defaultdict
 from config import BASE_OUTPUT_FOLDER, MAX_LINK_LEVEL
 from file_utils import save_summary
 
-# Set up logging
 def setup_logging():
-    """Set up logging configuration."""
+    """
+    Set up logging configuration.
+    
+    Configures logging to output to both a file and the console with
+    appropriate formatting and log level.
+    
+    Returns:
+        Logger: A configured logger instance.
+    """
     os.makedirs(BASE_OUTPUT_FOLDER, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO, 
@@ -20,7 +27,19 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 def summarize_md_counts(product_metrics=None):
-    """Scan the output folder and count markdown files by product, and summarize metrics."""
+    """
+    Scan the output folder and count markdown files by product, and summarize metrics.
+    
+    Traverses the output directory structure to count markdown files for each product
+    and logs summary information including metrics if provided.
+    
+    Args:
+        product_metrics (dict, optional): Dictionary containing metrics for each product.
+            Defaults to None.
+        
+    Returns:
+        dict: A dictionary mapping product names to markdown file counts.
+    """
     summary_counts = defaultdict(int)
     logger = logging.getLogger(__name__)
     

@@ -19,14 +19,24 @@ from response_parser import parse_and_fix_json_response
 
 
 def get_index_info(index_dir: str) -> dict:
-    """
-    Get information about the FAISS index.
+    """Get information about the FAISS index.
+    
+    Extracts metadata and statistics about a FAISS index, including
+    total vectors, dimensions, product distribution, and GPU usage.
     
     Args:
         index_dir: Directory containing the FAISS index
         
     Returns:
-        Dictionary with index information
+        Dictionary with index information including:
+        - total_vectors: Number of vectors in the index
+        - vector_dimension: Dimension of the vectors
+        - disk_size_bytes: Size of the index on disk in bytes
+        - disk_size_mb: Size of the index on disk in megabytes
+        - index_type: Type of FAISS index
+        - product_distribution: Counts of vectors by product category
+        - gpu_available: Whether GPU is available for FAISS
+        - gpu_usage: Description of GPU usage status
     """
     index_faiss = os.path.join(index_dir, "index.faiss")
     index_pkl = os.path.join(index_dir, "index.pkl")
@@ -159,11 +169,16 @@ def get_index_info(index_dir: str) -> dict:
 
 
 def direct_llm_query(question: str = None):
-    """
-    Query the LLM directly without using RAG, to demonstrate the difference.
+    """Query the LLM directly without using RAG, to demonstrate the difference.
+    
+    Sends a query directly to the LLM without providing any retrieved
+    document context, for comparison with RAG-enhanced responses.
     
     Args:
-        question: Question to ask the LLM
+        question: Question to ask the LLM (uses default if None)
+        
+    Returns:
+        The LLM's response as a JSON string
     """
     if not question:
         question = "How does Salesforce Communications Cloud handle product bundling?"
@@ -238,12 +253,17 @@ Answer (JSON only):
 
 
 def test_query(index_dir: str, custom_question: str = None):
-    """
-    Test the RAG system by running a sample query and generating a response.
+    """Test the RAG system by running a sample query and generating a response.
+    
+    Loads the FAISS index, retrieves relevant documents for the query,
+    and generates a response using the LLM with the retrieved context.
     
     Args:
         index_dir: Directory containing the FAISS index
-        custom_question: Optional custom question to test with
+        custom_question: Optional custom question to test with (uses default if None)
+        
+    Returns:
+        List of retrieved documents used for the response
     """
     embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
     index_faiss = os.path.join(index_dir, "index.faiss")

@@ -20,7 +20,11 @@ import rag_query
 
 
 def main():
-    """Main entry point for the RAG application."""
+    """Main entry point for the RAG application.
+    
+    Handles command line arguments, initializes logging, and orchestrates
+    the indexing and query processes based on the specified options.
+    """
     # Set up logging
     logging.basicConfig(level=logging.INFO, format=config.LOG_FORMAT)
     

@@ -17,11 +17,20 @@ from utils import hash_file_content, load_processed_hashes, save_processed_hash
 
 
 def extract_metadata_and_content(file_path: str) -> Tuple[Dict[str, Any], str, bool]:
-    """
-    Extract metadata and content from a markdown file with YAML frontmatter.
+    """Extract metadata and content from a markdown file with YAML frontmatter.
     
+    Reads a markdown file, extracts the YAML frontmatter metadata and the main content.
+    Also retrieves product information from the directory structure.
+    
+    Args:
+        file_path: Path to the markdown file
+        
     Returns:
-        Tuple containing (metadata, content, success_flag)
+        Tuple containing (
+            metadata: Dictionary of metadata fields,
+            content: String containing the markdown content,
+            success_flag: Boolean indicating if extraction was successful
+        )
     """
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -61,11 +70,18 @@ def extract_metadata_and_content(file_path: str) -> Tuple[Dict[str, Any], str, b
 
 
 def split_document_into_chunks(content: str, metadata: Dict[str, Any], splitter: MarkdownHeaderTextSplitter) -> List[Document]:
-    """
-    Split document content into chunks using the provided splitter.
+    """Split document content into chunks using the provided splitter.
     
+    Divides a document into smaller chunks based on markdown headers,
+    preserving metadata across all chunks.
+    
+    Args:
+        content: The markdown content to split
+        metadata: Metadata dictionary to associate with each chunk
+        splitter: The MarkdownHeaderTextSplitter to use for chunking
+        
     Returns:
-        List of Document objects with appropriate metadata.
+        List of Document objects with appropriate metadata
     """
     # Make sure we're passing a string
     if not isinstance(content, str):

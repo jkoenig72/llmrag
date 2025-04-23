@@ -1,3 +1,10 @@
+"""
+Main entry point for the Salesforce documentation scraper.
+
+This module initializes the crawler and coordinates the scraping process
+across multiple products using a multithreaded approach.
+"""
+
 import os
 import threading
 import queue
@@ -9,7 +16,15 @@ from crawler import process_link_bfs
 from logger import setup_logging, summarize_md_counts
 
 def main():
-    """Main entry point for the scraper."""
+    """
+    Main entry point for the scraper.
+    
+    Creates the output directory, sets up logging, launches crawler threads
+    for each product, collects metrics, and summarizes results.
+    
+    Returns:
+        None
+    """
     # Create base output directory
     os.makedirs(BASE_OUTPUT_FOLDER, exist_ok=True)
     

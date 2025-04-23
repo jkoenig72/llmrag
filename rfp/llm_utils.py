@@ -9,7 +9,35 @@ from langchain_community.vectorstores import FAISS
 logger = logging.getLogger(__name__)
 
 def load_faiss_index(index_dir: str, embedding_model: str, skip_indexing: bool = True):
-    """Load FAISS vector index from disk."""
+    """
+    Load FAISS vector index from disk.
+    
+    This function initializes a FAISS vector index using the specified embedding model
+    and loads it from the provided directory path.
+    
+    Parameters
+    ----------
+    index_dir : str
+        Path to the directory containing the FAISS index
+    embedding_model : str
+        Name of the Hugging Face embedding model to use
+    skip_indexing : bool, default True
+        If True, load existing index; if False, attempt to create a new index
+        
+    Returns
+    -------
+    FAISS
+        Loaded FAISS vector store instance
+        
+    Raises
+    ------
+    FileNotFoundError
+        If skip_indexing is True and the index directory doesn't exist
+    NotImplementedError
+        If skip_indexing is False (indexing is currently not implemented)
+    Exception
+        For other errors during index loading
+    """
     try:
         embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
         if skip_indexing:
@@ -26,7 +54,34 @@ def load_faiss_index(index_dir: str, embedding_model: str, skip_indexing: bool =
         raise
 
 def extract_json_from_llm_response(response: str) -> Dict[str, str]:
-    """Extract JSON from LLM response with multiple fallback strategies."""
+    """
+    Extract JSON from LLM response with multiple fallback strategies.
+    
+    This function attempts to parse a JSON response from an LLM output using
+    various extraction methods, falling back to simpler methods if initial
+    attempts fail.
+    
+    Parameters
+    ----------
+    response : str
+        The raw text response from the LLM
+        
+    Returns
+    -------
+    Dict[str, str]
+        A dictionary containing at minimum "answer" and "compliance" keys
+        If no valid JSON is found, returns a default dict with the entire response
+        as the "answer" and "PC" as the "compliance" value
+        
+    Notes
+    -----
+    The function tries multiple strategies in this order:
+    1. Direct JSON parsing of the entire response
+    2. Extracting and parsing JSON from code blocks
+    3. Using regex to find and parse JSON objects
+    4. Removing markdown formatting and retrying JSON parsing
+    5. Determining compliance from text indicators if JSON extraction fails
+    """
     default_result = {
         "answer": response.strip(),
         "compliance": "PC"
@@ -99,7 +154,30 @@ def extract_json_from_llm_response(response: str) -> Dict[str, str]:
     return default_result
 
 def validate_compliance_value(value: str) -> str:
-    """Validate and normalize compliance values to standard format."""
+    """
+    Validate and normalize compliance values to standard format.
+    
+    This function takes a compliance value string and normalizes it to one of
+    the standard compliance codes: FC, PC, NC, or NA.
+    
+    Parameters
+    ----------
+    value : str
+        The compliance value to validate and normalize
+        
+    Returns
+    -------
+    str
+        A normalized compliance value (one of: FC, PC, NC, NA)
+        If the input value doesn't match any known format, defaults to "PC"
+        
+    Notes
+    -----
+    - FC = Fully Compliant
+    - PC = Partially Compliant
+    - NC = Not Compliant
+    - NA = Not Applicable
+    """
     valid_values = ["FC", "PC", "NC", "NA"]
     clean_value = value.strip().upper()
     if clean_value in valid_values:

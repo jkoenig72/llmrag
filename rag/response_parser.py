@@ -6,14 +6,18 @@ import json
 import re
 
 def parse_and_fix_json_response(response_text):
-    """
-    Parse and fix JSON responses to ensure they have the required fields.
+    """Parse and fix JSON responses to ensure they have the required fields.
+    
+    Takes a raw text response from the LLM and processes it to ensure
+    it has the correct JSON structure with required fields. Handles
+    various error cases and malformed responses.
     
     Args:
         response_text: The text response from the LLM
     
     Returns:
-        A properly formatted JSON response as a string
+        A properly formatted JSON response as a string with both
+        'compliance' and 'answer' fields
     """
     # Clean up the response text
     cleaned_text = response_text.strip()

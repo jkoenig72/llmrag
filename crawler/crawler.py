@@ -23,8 +23,15 @@ def process_link_bfs(product_info):
     """
     Process links for a product using breadth-first search.
     
+    Crawls product documentation by following links in a breadth-first manner,
+    processing pages at each level before moving to the next depth level.
+    
     Args:
         product_info (dict): Dictionary containing product name and starting URLs.
+            Expected keys: 'product' and 'urls'.
+    
+    Returns:
+        dict: Metrics dictionary containing statistics about the crawl.
     """
     product = product_info["product"]
     urls = product_info.get("urls", [])
