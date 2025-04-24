@@ -48,11 +48,10 @@ def main():
     parser = argparse.ArgumentParser(description="Build a FAISS index from Markdown files for RAG")
     parser.add_argument("--source", help="Path to markdown documents")
     parser.add_argument("--target", required=True, help="Path to store/load the FAISS index")
-    parser.add_argument("--test-query", action="store_true", help="Run a test query after indexing")
+    parser.add_argument("--test-query", action="store_true", help="Run test queries comparing raw LLM, grounded LLM, and RAG")
     parser.add_argument("--question", help="Custom question for test query (used with --test-query)")
     parser.add_argument("--skip-indexing", action="store_true", help="Skip index building and just run queries")
     parser.add_argument("--info", action="store_true", help="Show information about the FAISS index")
-    parser.add_argument("--direct-llm", action="store_true", help="Query the LLM directly without RAG for comparison")
     args = parser.parse_args()
 
     print("🧠 Starting RAG system...")
@@ -119,24 +118,15 @@ def main():
                 
         except Exception as e:
             print(f"❌ Error retrieving index information: {e}")
-            
-    elif args.direct_llm:
-        # Skip RAG and query the LLM directly
-        rag_query.direct_llm_query(args.question)
-        
+    
     elif args.test_query:
         if args.question:
             print(f"\n🔍 Running test query with custom question: '{args.question}'")
         else:
             print("\n🔍 Running test query with default question...")
-        rag_query.test_query(args.target, args.question)
         
-        # If comparison is desired, also run direct LLM query
-        if args.direct_llm:
-            rag_query.direct_llm_query(args.question)
-            
-    elif args.skip_indexing:
-        print("\n❓ No action performed. Use --test-query to run a query against the existing index.")
+        # Run the comprehensive test query that includes all three modes
+        rag_query.test_query(args.target, args.question)
 
 
 if __name__ == "__main__":

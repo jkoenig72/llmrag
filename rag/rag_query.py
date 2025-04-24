@@ -168,11 +168,46 @@ def get_index_info(index_dir: str) -> dict:
     }
 
 
-def direct_llm_query(question: str = None):
-    """Query the LLM directly without using RAG, to demonstrate the difference.
+def raw_llm_query(question: str = None):
+    """Query the LLM with no grounding and no RAG context.
     
-    Sends a query directly to the LLM without providing any retrieved
-    document context, for comparison with RAG-enhanced responses.
+    Sends a query directly to the LLM without any grounding prompt or RAG context,
+    to demonstrate the baseline LLM capabilities.
+    
+    Args:
+        question: Question to ask the LLM (uses default if None)
+        
+    Returns:
+        The LLM's raw response as a string
+    """
+    if not question:
+        question = "How does Salesforce Communications Cloud handle product bundling?"
+    
+    print("\n📝 Querying LLM with no grounding or RAG (raw query)")
+    
+    # Initialize the LLM
+    llm = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_URL)
+    
+    # Generate direct prompt without any grounding
+    prompt = question
+    
+    # Generate response
+    response = llm.invoke(prompt)
+    
+    # Print results
+    print("\n" + "=" * 40)
+    print(f"Question: {question}")
+    print(f"Raw LLM Answer (NO GROUNDING, NO RAG): {response}")
+    print("=" * 40)
+    
+    return response
+
+
+def direct_llm_query(question: str = None):
+    """Query the LLM directly with grounding prompt but without using RAG.
+    
+    Sends a query directly to the LLM with a grounding prompt but without providing
+    any retrieved document context, for comparison with RAG-enhanced responses.
     
     Args:
         question: Question to ask the LLM (uses default if None)
@@ -183,7 +218,7 @@ def direct_llm_query(question: str = None):
     if not question:
         question = "How does Salesforce Communications Cloud handle product bundling?"
     
-    print("\n📝 Querying LLM directly without RAG (no context provided)")
+    print("\n📝 Querying LLM with grounding but without RAG (no context provided)")
     
     # Initialize the LLM
     llm = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_URL)
@@ -246,17 +281,19 @@ Answer (JSON only):
     # Print results
     print("\n" + "=" * 40)
     print(f"Question: {question}")
-    print(f"Direct LLM Answer (NO RAG): {response}")
+    print(f"Grounded LLM Answer (NO RAG): {response}")
     print("=" * 40)
     
     return response
 
 
 def test_query(index_dir: str, custom_question: str = None):
-    """Test the RAG system by running a sample query and generating a response.
+    """Test all query modes (raw, grounded, and RAG-enhanced) and generate responses.
     
-    Loads the FAISS index, retrieves relevant documents for the query,
-    and generates a response using the LLM with the retrieved context.
+    Loads the FAISS index, runs three types of queries for comparison:
+    1. Raw LLM with no grounding and no RAG
+    2. LLM with grounding but no RAG
+    3. LLM with both grounding and RAG
     
     Args:
         index_dir: Directory containing the FAISS index
@@ -265,6 +302,23 @@ def test_query(index_dir: str, custom_question: str = None):
     Returns:
         List of retrieved documents used for the response
     """
+    # Use custom question if provided, otherwise use default
+    question = custom_question or "How does Salesforce Communications Cloud handle product bundling?"
+    
+    print("\n🔍 Running comprehensive test query with all three modes:")
+    print("  1. Raw LLM (no grounding, no RAG)")
+    print("  2. Grounded LLM (with grounding, no RAG)")
+    print("  3. RAG-enhanced LLM (with grounding and document context)")
+    
+    # Mode 1: Raw LLM query (no grounding, no RAG)
+    raw_llm_query(question)
+    
+    # Mode 2: Direct LLM query (with grounding, no RAG)
+    direct_llm_query(question)
+    
+    # Mode 3: RAG-enhanced query (with grounding and document context)
+    print("\n📝 Running RAG-enhanced query (with grounding and document context)")
+    
     embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
     index_faiss = os.path.join(index_dir, "index.faiss")
     index_pkl = os.path.join(index_dir, "index.pkl")
@@ -286,9 +340,6 @@ def test_query(index_dir: str, custom_question: str = None):
     # Increase the number of documents to retrieve for more context
     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
     llm = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_URL, temperature=0.2)
-
-    # Use custom question if provided, otherwise use default
-    question = custom_question or "How does Salesforce Communications Cloud handle product bundling?"
     
     # Retrieve relevant documents
     try:
