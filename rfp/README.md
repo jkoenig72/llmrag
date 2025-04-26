@@ -36,6 +36,18 @@ cd rfp
 pip install -r requirements.txt
 ```
 
+### Architecture Diagrams
+
+#### Flow Diagram
+![Flow Diagram](../images/rfp_f.png)
+
+This diagram shows the major components of rag module and how they interact.
+
+#### Sequence Diagram
+![Sequence Diagram](../images/rfp_s.png)
+
+This sequence diagram illustrates the typical flow of a rag operation from initialization to completion.
+
 3. Set up environment variables or create a `.env` file:
 ```bash
 # Google Sheets Configuration
