@@ -102,8 +102,4 @@ The system assigns compliance levels to each answer:
 
 ## License and Contributions
 
-Maintained by Joerg Koenig. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
-
-## Disclaimer
-
-This project is intended for internal use with Salesforce and MuleSoft documentation. Ensure that API keys and sensitive credentials are secured via the env.sh file, which is excluded from version control.
+Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
