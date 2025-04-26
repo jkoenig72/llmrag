@@ -130,12 +130,12 @@ The crawler is organized into several Python modules:
 ### Architecture Diagrams
 
 #### Flow Diagram
-![Flow Diagram](flow-diagram.png)
+![Flow Diagram](../images/crawler_f.png)
 
 This diagram shows the major components of the crawler and how they interact.
 
 #### Sequence Diagram
-![Sequence Diagram](sequence-diagram.png)
+![Sequence Diagram](../images/crawler_s.png)
 
 This sequence diagram illustrates the typical flow of a crawl operation from initialization to completion.
 
@@ -152,16 +152,3 @@ To support a new page type:
 2. Implement a new handler function in `page_handlers.py`
 3. Update the `process_page()` function to use your new handler
 
-## Troubleshooting
-
-- **Selenium issues**: Ensure Chrome is installed and up to date
-- **Rate limiting**: Adjust the `wait_time` parameter in `load_page()` to add delays
-- **Memory issues**: Reduce `MAX_PAGES_PER_PRODUCT` or run the crawler for fewer products at a time
-
-## License
-
-[Your license information here]
-
-## Credits
-
-[Your credits information here]
