@@ -27,8 +27,8 @@ This system processes questions from a Google Sheet, uses a FAISS vector databas
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/rag-processing.git
-cd rag-processing
+git clone https://github.com/jkoenig72/llmrag.git
+cd rfp
 ```
 
 2. Install dependencies:
