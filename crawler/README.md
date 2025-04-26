@@ -27,8 +27,8 @@ The crawler performs a breadth-first search on documentation pages, processes th
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/salesforce-documentation-crawler.git
-cd salesforce-documentation-crawler
+git clone https://github.com/jkoenig72/llmrag.git
+cd crawler
 ```
 
 2. Install dependencies:
