@@ -36,22 +36,12 @@ The current faiss index vector db is build with infos from help.salesforce and t
 - Marketing Cloud
 - MuleSoft
 
-python main.py --target /home/fritz/FAISSIndexV5 --skip-indexing --info
-
-FAISS with GPU support detected! (1 GPU available)
-    Using FAISS version: 1.10.0
-Starting RAG system...
-FAISS index location: /home/fritz/FAISSIndexV5
-Skipping indexing phase as requested...
-FAISS Index Information:
-DEBUG: Metadata type: <class 'tuple'>
-DEBUG: Metadata tuple length: 2
-DEBUG: Successfully extracted product distribution with 9 products
 Total vectors: 112,188
 Vector dimension: 1024
 Index type: Flat
 Index size: 550.05 MB
 GPU usage: Available and detected
+
 Product distribution:
   - Platform: 18,976 vectors
   - Sales Cloud: 17,528 vectors
