@@ -162,10 +162,3 @@ def invoke_llm_with_retry(llm, prompt):
 
 Logs are written to both the console and a log file at `{BASE_DIR}/rag_processing.log`.
 
-## Recent Updates
-
-- Added comprehensive PEP 257-compliant docstrings to all functions
-- Improved error handling with more specific exception handling
-- Refactored main.py to extract `process_questions` function for better organization
-- Enhanced documentation including flow diagrams and sequence diagrams
-- Standardized code style and improved readability
