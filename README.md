@@ -53,6 +53,8 @@ Product distribution:
   - Experience Cloud: 3,978 vectors
   - MuleSoft: 2,943 vectors
 
+## !!! A build index is not part of this repo. Build one yourself or ping me.  
+
 ## Project Structure
 
 ```
