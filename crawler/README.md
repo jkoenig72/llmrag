@@ -1,6 +1,6 @@
 # Salesforce Documentation Crawler
 
-A production-grade, multithreaded documentation crawler designed to build a high-quality, offline-ready markdown dataset for retrieval-augmented generation (RAG) systems like LangChain.
+A multithreaded documentation crawler designed to build a high-quality, offline-ready markdown dataset for retrieval-augmented generation (RAG) systems like LangChain.
 
 ## Overview
 
