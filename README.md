@@ -22,6 +22,60 @@ This architecture enables efficient retrieval-augmented generation workflows, id
 - GPU acceleration support for faster processing.
 - Batch processing and retry logic for robust automation.
 
+The current faiss index vector db is build with infos from help.salesforce and trailhead around those products
+
+Sales_Cloud
+Service_Cloud
+Agentforce
+Platform
+Communications_Cloud
+Experience_Cloud
+Data_Cloud
+Marketing_Cloud
+MuleSoft
+
+(llms-env) fritz@ai2:~/llms-env/llmrag/rag$ python main.py --target /home/fritz/FAISSIndexV5 --info
+
+✅ FAISS with GPU support detected! (1 GPU available)
+    Using FAISS version: 1.10.0
+
+🧠 Starting RAG system...
+💾 FAISS index location: /home/fritz/FAISSIndexV5
+usage: main.py [-h] [--source SOURCE] --target TARGET [--test-query] [--question QUESTION] [--skip-indexing] [--info]
+main.py: error: --source is required when not using --skip-indexing
+(llms-env) fritz@ai2:~/llms-env/llmrag/rag$ python main.py --target /home/fritz/FAISSIndexV5 --skip-indexing --info
+
+✅ FAISS with GPU support detected! (1 GPU available)
+    Using FAISS version: 1.10.0
+
+🧠 Starting RAG system...
+💾 FAISS index location: /home/fritz/FAISSIndexV5
+⏭️ Skipping indexing phase as requested...
+
+📊 FAISS Index Information:
+DEBUG: Metadata type: <class 'tuple'>
+DEBUG: Metadata tuple length: 2
+DEBUG: Successfully extracted product distribution with 9 products
+Total vectors: 112,188
+Vector dimension: 1024
+Index type: Flat
+Index size: 550.05 MB
+
+GPU usage: Available and detected
+
+Product distribution:
+  - Platform: 18,976 vectors
+  - Sales Cloud: 17,528 vectors
+  - Marketing Cloud: 14,760 vectors
+  - Agentforce: 14,400 vectors
+  - Communications Cloud: 13,709 vectors
+  - Data Cloud: 13,256 vectors
+  - Service Cloud: 12,638 vectors
+  - Experience Cloud: 3,978 vectors
+  - MuleSoft: 2,943 vectors
+
+  
+
 ## Project Structure
 
 ```
