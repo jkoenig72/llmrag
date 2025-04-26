@@ -127,6 +127,18 @@ The crawler is organized into several Python modules:
 - `logger.py`: Logging configuration and summary generation
 - `config.py`: Configuration settings
 
+### Architecture Diagrams
+
+#### Flow Diagram
+![Flow Diagram](flow-diagram.png)
+
+This diagram shows the major components of the crawler and how they interact.
+
+#### Sequence Diagram
+![Sequence Diagram](sequence-diagram.png)
+
+This sequence diagram illustrates the typical flow of a crawl operation from initialization to completion.
+
 ## Extending the Crawler
 
 ### Adding New Product Categories
@@ -145,3 +157,11 @@ To support a new page type:
 - **Selenium issues**: Ensure Chrome is installed and up to date
 - **Rate limiting**: Adjust the `wait_time` parameter in `load_page()` to add delays
 - **Memory issues**: Reduce `MAX_PAGES_PER_PRODUCT` or run the crawler for fewer products at a time
+
+## License
+
+[Your license information here]
+
+## Credits
+
+[Your credits information here]
