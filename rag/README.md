@@ -55,6 +55,18 @@ ollama serve  # Start the Ollama server
 ollama pull gemma3:12b  # Pull the default model
 ```
 
+### Architecture Diagrams
+
+#### Flow Diagram
+![Flow Diagram](../images/rag_f.png)
+
+This diagram shows the major components of rag module and how they interact.
+
+#### Sequence Diagram
+![Sequence Diagram](../images/rag_s.png)
+
+This sequence diagram illustrates the typical flow of a rag operation from initialization to completion.
+
 ## Usage
 
 ### Building the Index
