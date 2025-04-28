@@ -323,9 +323,6 @@ statuses like 'Completed', 'Running', 'Failed', or 'Fatally Failed'.
 Compliance: FC
 
 References (5):
-• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_config.htm&language=en_US
-• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_statuses.htm&language=en_US
-• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_decomposition.htm&language=en_US
-• https://sf-zdocs-cdn-prod.zoominsoftware.com/tdta-order_management-254-13-production-enus/13172a3a-5b30-49ae-979e-e108209443e4/order_management/documents/om_t_ponr.html
+• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_config.htm&language=en_US&type=5
 • https://help.salesforce.com/s/articleView?id=ind.comms_t_rules_for_how_point_of_no_returnponrpropagates_through_a_decompositionplan_234475.htm&language=en_US&type=5
 ```
