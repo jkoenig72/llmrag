@@ -27,8 +27,8 @@ LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/e5-large-v2")
 
 # Retriever Configuration
-RETRIEVER_K_DOCUMENTS = int(os.getenv("RETRIEVER_K_DOCUMENTS", "8"))  # Number of documents to retrieve
-CUSTOMER_RETRIEVER_K_DOCUMENTS = int(os.getenv("CUSTOMER_RETRIEVER_K_DOCUMENTS", "5"))  # Number of customer docs to retrieve
+RETRIEVER_K_DOCUMENTS = int(os.getenv("RETRIEVER_K_DOCUMENTS", "3"))  # Number of documents to retrieve
+CUSTOMER_RETRIEVER_K_DOCUMENTS = int(os.getenv("CUSTOMER_RETRIEVER_K_DOCUMENTS", "3"))  # Number of customer docs to retrieve
 
 # Role Definitions
 QUESTION_ROLE = os.getenv("QUESTION_ROLE", "question")

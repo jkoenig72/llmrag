@@ -10,41 +10,12 @@ from config import GOOGLE_API_MAX_RETRIES, GOOGLE_API_RETRY_DELAY, API_THROTTLE_
 logger = logging.getLogger(__name__)
 
 class GoogleSheetHandler:
-    """
-    Handler for Google Sheets operations including reading data and updating cells.
-    
-    This class provides methods to interact with Google Sheets, including:
-    - Loading data with role markers
-    - Updating cells individually or in batches
-    - Processing and updating cleaned record data
-    
-    Attributes
-    ----------
-    client : gspread.Client
-        Authenticated Google Sheets client
-    sheet : gspread.Worksheet
-        The active worksheet being processed
-    sheet_id : str
-        The ID of the Google Sheet
-    references_column_index : int
-        The column index for references, used for special formatting
-    """
-    
     def __init__(self, sheet_id: str, credentials_file: str):
-        """
-        Initialize the GoogleSheetHandler with sheet ID and credentials.
-        
-        Parameters
-        ----------
-        sheet_id : str
-            The ID of the Google Sheet to process
-        credentials_file : str
-            Path to the Google API credentials JSON file
-        """
+        """Initialize the GoogleSheetHandler with sheet ID and credentials."""
         self.client = gspread.service_account(filename=credentials_file)
         self.sheet = self.client.open_by_key(sheet_id).sheet1
         self.sheet_id = sheet_id
-        self.references_column_index = None  # Will be set during initialization
+        self.references_column_index = None
 
     @retry(
         stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
@@ -53,26 +24,7 @@ class GoogleSheetHandler:
         reraise=True
     )
     def load_data(self) -> Tuple[List[str], Dict[str, List[int]], List[List[str]], gspread.Worksheet]:
-        """
-        Load data from the Google Sheet including headers, roles, and content rows.
-        
-        This method looks for a row with the '#answerforge#' marker in the first column
-        to identify the roles row, then processes the sheet structure accordingly.
-        
-        Returns
-        -------
-        Tuple[List[str], Dict[str, List[int]], List[List[str]], gspread.Worksheet]
-            A tuple containing:
-            - headers: The first row of the sheet
-            - roles: Dictionary mapping role names to column indices
-            - rows: Content rows (after the roles row)
-            - sheet: The gspread Worksheet object
-            
-        Raises
-        ------
-        ValueError
-            If the role marker '#answerforge#' is not found in the first column
-        """
+        """Load data from the Google Sheet including headers, roles, and content rows."""
         try:
             sheet = self.sheet
             all_values = sheet.get_all_values()
@@ -86,7 +38,7 @@ class GoogleSheetHandler:
             if roles_row_idx is None:
                 raise ValueError("Could not find role marker '#answerforge#' in first column")
 
-            headers = all_values[0]  # Still return the first row as headers for traceability
+            headers = all_values[0]
             role_row = all_values[roles_row_idx]
             roles = {}
             for col_idx, role in enumerate(role_row):
@@ -94,18 +46,16 @@ class GoogleSheetHandler:
                 if role_clean:
                     roles.setdefault(role_clean, []).append(col_idx + 1)
             
-            # Store the references column index for special formatting
-            references_role = "references"
-            if references_role in roles and roles[references_role]:
-                self.references_column_index = roles[references_role][0]
-
             rows = all_values[roles_row_idx + 1:]
             return headers, roles, rows, sheet
             
         except APIError as e:
             if "Quota exceeded" in str(e):
                 logger.warning(f"Google API quota exceeded, will retry in {GOOGLE_API_RETRY_DELAY} seconds...")
-            raise  # Let tenacity handle the retry
+            raise
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            raise
 
     @retry(
         stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
@@ -115,94 +65,37 @@ class GoogleSheetHandler:
     )
     def update_batch(self, updates: List[Dict[str, Any]]):
         """
-        Perform a batch update of multiple cells in the Google Sheet.
-        
-        Parameters
-        ----------
-        updates : List[Dict[str, Any]]
-            List of update operations, each containing:
-            - "row": The row number to update
-            - "col": The column number to update
-            - "value": The new value to set
-            
-        Returns
-        -------
-        None
-        
-        Raises
-        ------
-        Exception
-            If an error occurs during the batch update operation
-            
-        Notes
-        -----
-        Uses the Google Sheets API batch_update method to minimize API calls.
+        Update cells in the Google Sheet - simple version.
         """
         try:
             if not updates:
                 return
 
-            batch_updates = []
+            # Process updates one by one for simplicity and reliability
             for update in updates:
                 row, col, value = update["row"], update["col"], update["value"]
+                cell = gspread.utils.rowcol_to_a1(row, col)
                 
-                # Special formatting for references (URLs)
-                if self.references_column_index and col == self.references_column_index:
-                    # Format references with bullets for better readability
-                    if value and not value.startswith("•") and "\n" in value:
-                        lines = value.split("\n")
-                        value = "\n".join([f"• {line.strip()}" if not line.strip().startswith("•") else line for line in lines])
-                        
-                    batch_updates.append({
-                        'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
-                        'values': [[value]],
-                    })
-                else:
-                    batch_updates.append({
-                        'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
-                        'values': [[value]]
-                    })
-
-            if batch_updates:
-                self.sheet.batch_update(batch_updates)
-                logger.info(f"Batch updated {len(batch_updates)} cells.")
-                # Add delay after batch update to avoid quota issues
-                time.sleep(API_THROTTLE_DELAY)
+                try:
+                    # Update each cell directly, no special handling needed
+                    self.sheet.update(cell, [[value]])
+                    logger.info(f"Updated cell {cell}")
+                except Exception as e:
+                    logger.error(f"Failed to update cell {cell}: {e}")
+            
+            # Add delay after updates to avoid quota issues
+            time.sleep(API_THROTTLE_DELAY)
                 
         except APIError as e:
             if "Quota exceeded" in str(e):
                 logger.warning(f"Google API quota exceeded, will retry in {GOOGLE_API_RETRY_DELAY} seconds...")
-            raise  # Let tenacity handle the retry
+            raise
         except Exception as e:
-            logger.error(f"Error performing batch update: {e}")
+            logger.error(f"Error in update_batch: {e}")
             raise
 
     def update_cleaned_records(self, records, roles, question_role, context_role, throttle_delay):
-        """
-        Update the sheet with cleaned record data for specific roles.
-        
-        Parameters
-        ----------
-        records : List[Dict]
-            List of record dictionaries containing cleaned data
-        roles : Dict[str, List[int]]
-            Dictionary mapping role names to column indices
-        question_role : str
-            The key identifying question role fields
-        context_role : str
-            The key identifying context role fields
-        throttle_delay : int
-            Number of seconds to wait between updates
-            
-        Returns
-        -------
-        None
-        
-        Notes
-        -----
-        Only updates cells where the cleaned content differs from the original.
-        Applies throttling between updates to prevent API rate limiting.
-        """
+        """Update the sheet with cleaned record data for specific roles."""
         for record in records:
             updates = []
             row_num = record["sheet_row"]
@@ -220,7 +113,6 @@ class GoogleSheetHandler:
                     # Fetch original from the sheet
                     cell_range = gspread.utils.rowcol_to_a1(row_num, col_idx)
                     
-                    # Add retry logic for individual cell reads
                     @retry(
                         stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
                         wait=wait_exponential(multiplier=1, min=GOOGLE_API_RETRY_DELAY, max=60),
@@ -233,11 +125,9 @@ class GoogleSheetHandler:
                     original = get_cell_value()
 
                     if cleaned.strip() == original.strip():
-                        logger.debug(f"Row {row_num} Col {col_idx}: Skipping. Same content.")
                         continue
 
                     updates.append({"row": row_num, "col": col_idx, "value": cleaned})
-                    logger.debug(f"Row {row_num} Col {col_idx}: Will update. OLD: '{original[:100]}' → NEW: '{cleaned[:100]}'")
 
             if updates:
                 self.update_batch(updates)
@@ -247,27 +137,6 @@ class GoogleSheetHandler:
 def parse_records(headers, roles, rows):
     """
     Parse sheet rows into structured record dictionaries.
-    
-    Parameters
-    ----------
-    headers : List[str]
-        The header row from the sheet
-    roles : Dict[str, List[int]]
-        Dictionary mapping role names to column indices
-    rows : List[List[str]]
-        Content rows from the sheet
-        
-    Returns
-    -------
-    List[Dict]
-        List of record dictionaries, each containing:
-        - "sheet_row": The row number in the sheet (1-based)
-        - "roles": Dictionary of role values and cleaned versions
-        
-    Notes
-    -----
-    For each role, both the original and cleaned text are stored in the record.
-    The cleaned versions are stored with keys in the format "cleaned_{role}_{col_idx}".
     """
     records = []
     for idx, row in enumerate(rows):
@@ -287,26 +156,6 @@ def parse_records(headers, roles, rows):
 def find_output_columns(roles, answer_role, compliance_role, references_role=None):
     """
     Find the column indices for answer, compliance, and references roles.
-    
-    Parameters
-    ----------
-    roles : Dict[str, List[int]]
-        Dictionary mapping role names to column indices
-    answer_role : str
-        The key identifying answer role fields
-    compliance_role : str
-        The key identifying compliance role fields
-    references_role : str, optional
-        The key identifying references role fields
-        
-    Returns
-    -------
-    Dict[str, int]
-        Dictionary mapping role names to their first column index
-        
-    Notes
-    -----
-    If multiple columns exist for a role, only the first one is used.
     """
     columns = {}
     if answer_role in roles:
@@ -315,4 +164,6 @@ def find_output_columns(roles, answer_role, compliance_role, references_role=Non
         columns[compliance_role] = roles[compliance_role][0]
     if references_role and references_role in roles:
         columns[references_role] = roles[references_role][0]
+    
+    logger.info(f"Output columns: {columns}")
     return columns
