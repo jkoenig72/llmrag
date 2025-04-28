@@ -1,21 +1,35 @@
 import logging
 import os
 import time
-from typing import List, Dict, Any
-from langchain_ollama import OllamaLLM
+from typing import List, Dict, Any, Optional
 from langchain.chains import RetrievalQA
 
 # Import from local modules
 from config import (
     GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE, BASE_DIR, INDEX_DIR, 
-    SKIP_INDEXING, BATCH_SIZE, LLM_MODEL, LLM_BASE_URL, EMBEDDING_MODEL,
-    QUESTION_ROLE, CONTEXT_ROLE, ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY,
-    CLEAN_UP_CELL_CONTENT, SUMMARIZE_LONG_CELLS
+    SKIP_INDEXING, BATCH_SIZE, LLM_PROVIDER, LLM_MODEL, OLLAMA_BASE_URL, 
+    LLAMA_CPP_BASE_URL, EMBEDDING_MODEL, QUESTION_ROLE, CONTEXT_ROLE, 
+    ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY, CLEAN_UP_CELL_CONTENT, 
+    SUMMARIZE_LONG_CELLS, PRIMARY_PRODUCT_ROLE, INTERACTIVE_PRODUCT_SELECTION, 
+    REFERENCES_ROLE, RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
 )
-from prompts import SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT
+from prompts import (
+    SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT, 
+    get_question_prompt_with_products, QUESTION_PROMPT_WITH_CUSTOMER_CONTEXT,
+    get_question_prompt_with_products_and_customer
+)
 from sheets_handler import GoogleSheetHandler, parse_records, find_output_columns
 from text_processing import clean_text, clean_up_cells, summarize_long_texts
-from llm_utils import load_faiss_index, extract_json_from_llm_response, validate_compliance_value
+from llm_utils import (
+    load_faiss_index, discover_products_from_index, load_products_from_json
+)
+from llm_wrapper import get_llm
+from product_selector import select_products, select_starting_row
+from question_processor import (
+    validate_products_in_sheet, process_questions
+)
+from customer_docs import select_customer_folder, load_customer_index
+from question_logger import QuestionLogger
 
 # Configure logging
 logging.basicConfig(
@@ -51,12 +65,28 @@ def main():
     Errors are logged but may not halt processing (depends on the error).
     """
     try:
-        logger.info("Starting RAG processing...")
+        logger.info("Starting RFI/RFP response processing...")
+        
+        # Use factory to get LLM instance (includes llama-server check)
+        llm = get_llm(LLM_PROVIDER, LLM_MODEL, OLLAMA_BASE_URL, LLAMA_CPP_BASE_URL)
+        
+        # Initialize question logger
+        question_logger = QuestionLogger(BASE_DIR)
+        
         sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
         headers, roles, rows, sheet = sheet_handler.load_data()
-        llm = OllamaLLM(model=LLM_MODEL, base_url=LLM_BASE_URL)
 
         records = parse_records(headers, roles, rows)
+        
+        # Let user select starting row
+        start_row = select_starting_row(records, QUESTION_ROLE)
+        if start_row is None:
+            logger.error("No valid starting row selected. Exiting.")
+            return
+            
+        # Filter records to only include rows from start_row onwards
+        records = [r for r in records if r["sheet_row"] >= start_row]
+        logger.info(f"Processing {len(records)} records starting from row {start_row}")
 
         if CLEAN_UP_CELL_CONTENT:
             clean_up_cells(records, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
@@ -66,12 +96,45 @@ def main():
             summarize_long_texts(records, llm, SUMMARY_PROMPT)
             sheet_handler.update_cleaned_records(records, roles, QUESTION_ROLE, CONTEXT_ROLE, API_THROTTLE_DELAY)
 
-        output_columns = find_output_columns(roles, ANSWER_ROLE, COMPLIANCE_ROLE)
+        output_columns = find_output_columns(roles, ANSWER_ROLE, COMPLIANCE_ROLE, REFERENCES_ROLE)
         if not output_columns:
             logger.error("No output columns found. Exiting.")
             return
 
-        retriever = load_faiss_index(INDEX_DIR, EMBEDDING_MODEL, SKIP_INDEXING).as_retriever(search_kwargs={"k": 6})
+        # Load main FAISS index
+        faiss_index = load_faiss_index(INDEX_DIR, EMBEDDING_MODEL, SKIP_INDEXING)
+        retriever = faiss_index.as_retriever(search_kwargs={"k": RETRIEVER_K_DOCUMENTS})
+        
+        # Load products directly from JSON or discover from index
+        if os.path.exists('start_links.json'):
+            available_products = load_products_from_json()
+        else:
+            available_products = discover_products_from_index(faiss_index)
+        
+        # Validate products from sheet against available products
+        if PRIMARY_PRODUCT_ROLE in roles:
+            validate_products_in_sheet(records, PRIMARY_PRODUCT_ROLE, available_products)
+        
+        selected_products = None
+        if INTERACTIVE_PRODUCT_SELECTION and available_products:
+            selected_products = select_products(available_products)
+            
+        if selected_products:
+            logger.info(f"Selected products for focus: {', '.join(selected_products)}")
+        
+        # Select customer folder and index
+        customer_folder = select_customer_folder()
+        customer_index = None
+        customer_retriever = None
+        
+        if customer_folder and customer_folder["has_index"]:
+            customer_index = load_customer_index(customer_folder["name"])
+            if customer_index:
+                customer_retriever = customer_index.as_retriever(search_kwargs={"k": CUSTOMER_RETRIEVER_K_DOCUMENTS})
+                logger.info(f"Using customer context: {customer_folder['name']}")
+            else:
+                logger.warning(f"Failed to load customer index for {customer_folder['name']}")
+        
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=retriever,
@@ -84,83 +147,13 @@ def main():
             }
         )
 
-        process_questions(records, qa_chain, output_columns, sheet_handler)
+        process_questions(records, qa_chain, output_columns, sheet_handler, selected_products, 
+                         available_products, llm, customer_retriever, question_logger)
 
-        logger.info("RAG processing completed successfully.")
+        logger.info("RFI/RFP response processing completed successfully.")
 
     except Exception as e:
         logger.critical(f"Critical error in main execution: {e}")
-
-def process_questions(records, qa_chain, output_columns, sheet_handler):
-    """
-    Process each question record using the QA chain and update results.
-    
-    Parameters
-    ----------
-    records : List[Dict]
-        List of record dictionaries to process
-    qa_chain : RetrievalQA
-        The language model QA chain for generating answers
-    output_columns : Dict[str, int]
-        Dictionary mapping output roles to column indices
-    sheet_handler : GoogleSheetHandler
-        Handler for updating the Google Sheet
-        
-    Returns
-    -------
-    None
-    
-    Notes
-    -----
-    This function:
-    - Processes each record to extract the question and context
-    - Generates an answer using the QA chain
-    - Extracts structured JSON from the response
-    - Updates the Google Sheet with answers and compliance ratings
-    - Handles batch updates for efficiency
-    """
-    batch_updates = []
-    for i, record in enumerate(records):
-        row_num = record["sheet_row"]
-        question = clean_text(record["roles"].get(QUESTION_ROLE, ""))
-        additional_context = "\n".join([
-            f"{k}: {clean_text(v)}" for k, v in record["roles"].items()
-            if k.strip().lower() == CONTEXT_ROLE and v.strip()
-        ]).strip() or "N/A"
-
-        if not question:
-            logger.warning(f"⏭️ Row {row_num} skipped: No question found.")
-            continue
-
-        enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
-
-        try:
-            result = qa_chain.invoke({"question": enriched_question})
-            raw_answer = result["result"].strip()
-            parsed = extract_json_from_llm_response(raw_answer)
-            answer_text = parsed.get("answer", "")
-            compliance_value = validate_compliance_value(parsed.get("compliance", "PC"))
-
-            for role, col in output_columns.items():
-                if role == ANSWER_ROLE:
-                    batch_updates.append({"row": row_num, "col": col, "value": answer_text})
-                elif role == COMPLIANCE_ROLE:
-                    batch_updates.append({"row": row_num, "col": col, "value": compliance_value})
-
-            if len(batch_updates) >= BATCH_SIZE or i == len(records) - 1:
-                sheet_handler.update_batch(batch_updates)
-                batch_updates = []
-
-            logger.info(f"✅ Row {row_num} processed - Compliance: {compliance_value}")
-            print("\n" + "=" * 40)
-            print(f"✅ Row {row_num} complete")
-            print(f"Question: {question}")
-            print(f"Answer: {answer_text}")
-            print(f"Compliance: {compliance_value}")
-            print("=" * 40)
-
-        except Exception as e:
-            logger.error(f"❌ Failed to process row {row_num}: {e}")
 
 if __name__ == "__main__":
     main()

@@ -128,6 +128,7 @@ def generate_summary(text, llm, summary_prompt):
 def summarize_long_texts(records, llm, summary_prompt, word_limit=MAX_WORDS_BEFORE_SUMMARY):
     """
     Summarize texts that are longer than the specified word limit.
+    Only summarizes main role fields, not cleaned versions.
     
     For each text field that exceeds the word limit, generates a summary
     using the provided language model and prompt template.
@@ -150,11 +151,16 @@ def summarize_long_texts(records, llm, summary_prompt, word_limit=MAX_WORDS_BEFO
         
     Notes
     -----
-    This function will print before/after summaries and log changes.
+    This function will skip fields that start with "cleaned_" to avoid
+    duplicate summarization. It will print before/after summaries and log changes.
     If summarization fails for any reason, the error is logged but processing continues.
     """
     for record in records:
         for role, text in record["roles"].items():
+            # Skip cleaned versions to avoid duplicate summarization
+            if role.startswith("cleaned_"):
+                continue
+                
             if len(text.split()) > word_limit:
                 try:
                     print(f"\n[SUMMARY] Row {record['sheet_row']}, Role: {role}\nBefore:\n{text}\n")

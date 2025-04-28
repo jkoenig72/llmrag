@@ -7,19 +7,34 @@ langchain>=0.0.267
 langchain-ollama>=0.0.1
 langchain-huggingface>=0.0.1
 langchain-community>=0.0.10
+langchain-openai>=0.0.5
 
 # Vector Store
-faiss-cpu>=1.7.4  # Use faiss-gpu if GPU is available
+# faiss-cpu>=1.7.4  # Use faiss-gpu if GPU is available
 
 # Environment Variables
 python-dotenv>=1.0.0
 
 # Text Processing and Utilities
 unicodedata2>=15.0.0
-tenacity>=8.2.2  # For implementing retry logic
+tenacity>=8.2.2  # For retry logic
 
 # Embedding Models
 sentence-transformers>=2.2.2  # For HuggingFace embeddings
+transformers>=4.30.0
 
 # Logging and Formatting
-rich>=13.4.2  # Optional: For better console output
+rich>=13.4.2  # For better console output
+
+# Type hints
+typing-extensions>=4.5.0
+
+# Document Processing
+pypdf>=3.17.0  # For PDF support
+docx2txt>=0.8  # For DOCX support
+unstructured>=0.10.0  # For enhanced document parsing
+
+# Other dependencies
+numpy>=1.23.0
+pandas>=2.0.0
+tqdm>=4.65.0

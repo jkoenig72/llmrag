@@ -3,6 +3,9 @@ from typing import List, Dict, Any, Tuple
 import logging
 import time
 from text_processing import clean_text
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from gspread.exceptions import APIError
+from config import GOOGLE_API_MAX_RETRIES, GOOGLE_API_RETRY_DELAY, API_THROTTLE_DELAY
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,8 @@ class GoogleSheetHandler:
         The active worksheet being processed
     sheet_id : str
         The ID of the Google Sheet
+    references_column_index : int
+        The column index for references, used for special formatting
     """
     
     def __init__(self, sheet_id: str, credentials_file: str):
@@ -39,7 +44,14 @@ class GoogleSheetHandler:
         self.client = gspread.service_account(filename=credentials_file)
         self.sheet = self.client.open_by_key(sheet_id).sheet1
         self.sheet_id = sheet_id
+        self.references_column_index = None  # Will be set during initialization
 
+    @retry(
+        stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=GOOGLE_API_RETRY_DELAY, max=60),
+        retry=retry_if_exception_type(APIError),
+        reraise=True
+    )
     def load_data(self) -> Tuple[List[str], Dict[str, List[int]], List[List[str]], gspread.Worksheet]:
         """
         Load data from the Google Sheet including headers, roles, and content rows.
@@ -61,29 +73,46 @@ class GoogleSheetHandler:
         ValueError
             If the role marker '#answerforge#' is not found in the first column
         """
-        sheet = self.sheet
-        all_values = sheet.get_all_values()
+        try:
+            sheet = self.sheet
+            all_values = sheet.get_all_values()
 
-        roles_row_idx = None
-        for idx, row in enumerate(all_values):
-            if row and len(row) > 0 and '#answerforge#' in row[0].lower():
-                roles_row_idx = idx
-                break
+            roles_row_idx = None
+            for idx, row in enumerate(all_values):
+                if row and len(row) > 0 and '#answerforge#' in row[0].lower():
+                    roles_row_idx = idx
+                    break
 
-        if roles_row_idx is None:
-            raise ValueError("Could not find role marker '#answerforge#' in first column")
+            if roles_row_idx is None:
+                raise ValueError("Could not find role marker '#answerforge#' in first column")
 
-        headers = all_values[0]  # Still return the first row as headers for traceability
-        role_row = all_values[roles_row_idx]
-        roles = {}
-        for col_idx, role in enumerate(role_row):
-            role_clean = role.strip().lower()
-            if role_clean:
-                roles.setdefault(role_clean, []).append(col_idx + 1)
+            headers = all_values[0]  # Still return the first row as headers for traceability
+            role_row = all_values[roles_row_idx]
+            roles = {}
+            for col_idx, role in enumerate(role_row):
+                role_clean = role.strip().lower()
+                if role_clean:
+                    roles.setdefault(role_clean, []).append(col_idx + 1)
+            
+            # Store the references column index for special formatting
+            references_role = "references"
+            if references_role in roles and roles[references_role]:
+                self.references_column_index = roles[references_role][0]
 
-        rows = all_values[roles_row_idx + 1:]
-        return headers, roles, rows, sheet
+            rows = all_values[roles_row_idx + 1:]
+            return headers, roles, rows, sheet
+            
+        except APIError as e:
+            if "Quota exceeded" in str(e):
+                logger.warning(f"Google API quota exceeded, will retry in {GOOGLE_API_RETRY_DELAY} seconds...")
+            raise  # Let tenacity handle the retry
 
+    @retry(
+        stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=GOOGLE_API_RETRY_DELAY, max=60),
+        retry=retry_if_exception_type(APIError),
+        reraise=True
+    )
     def update_batch(self, updates: List[Dict[str, Any]]):
         """
         Perform a batch update of multiple cells in the Google Sheet.
@@ -116,14 +145,34 @@ class GoogleSheetHandler:
             batch_updates = []
             for update in updates:
                 row, col, value = update["row"], update["col"], update["value"]
-                batch_updates.append({
-                    'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
-                    'values': [[value]]
-                })
+                
+                # Special formatting for references (URLs)
+                if self.references_column_index and col == self.references_column_index:
+                    # Format references with bullets for better readability
+                    if value and not value.startswith("•") and "\n" in value:
+                        lines = value.split("\n")
+                        value = "\n".join([f"• {line.strip()}" if not line.strip().startswith("•") else line for line in lines])
+                        
+                    batch_updates.append({
+                        'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
+                        'values': [[value]],
+                    })
+                else:
+                    batch_updates.append({
+                        'range': f'{gspread.utils.rowcol_to_a1(row, col)}',
+                        'values': [[value]]
+                    })
 
             if batch_updates:
                 self.sheet.batch_update(batch_updates)
                 logger.info(f"Batch updated {len(batch_updates)} cells.")
+                # Add delay after batch update to avoid quota issues
+                time.sleep(API_THROTTLE_DELAY)
+                
+        except APIError as e:
+            if "Quota exceeded" in str(e):
+                logger.warning(f"Google API quota exceeded, will retry in {GOOGLE_API_RETRY_DELAY} seconds...")
+            raise  # Let tenacity handle the retry
         except Exception as e:
             logger.error(f"Error performing batch update: {e}")
             raise
@@ -170,7 +219,18 @@ class GoogleSheetHandler:
 
                     # Fetch original from the sheet
                     cell_range = gspread.utils.rowcol_to_a1(row_num, col_idx)
-                    original = self.sheet.acell(cell_range, value_render_option='UNFORMATTED_VALUE').value or ""
+                    
+                    # Add retry logic for individual cell reads
+                    @retry(
+                        stop=stop_after_attempt(GOOGLE_API_MAX_RETRIES),
+                        wait=wait_exponential(multiplier=1, min=GOOGLE_API_RETRY_DELAY, max=60),
+                        retry=retry_if_exception_type(APIError),
+                        reraise=True
+                    )
+                    def get_cell_value():
+                        return self.sheet.acell(cell_range, value_render_option='UNFORMATTED_VALUE').value or ""
+                    
+                    original = get_cell_value()
 
                     if cleaned.strip() == original.strip():
                         logger.debug(f"Row {row_num} Col {col_idx}: Skipping. Same content.")
@@ -224,9 +284,9 @@ def parse_records(headers, roles, rows):
         records.append(row_data)
     return records
 
-def find_output_columns(roles, answer_role, compliance_role):
+def find_output_columns(roles, answer_role, compliance_role, references_role=None):
     """
-    Find the column indices for answer and compliance roles.
+    Find the column indices for answer, compliance, and references roles.
     
     Parameters
     ----------
@@ -236,6 +296,8 @@ def find_output_columns(roles, answer_role, compliance_role):
         The key identifying answer role fields
     compliance_role : str
         The key identifying compliance role fields
+    references_role : str, optional
+        The key identifying references role fields
         
     Returns
     -------
@@ -251,4 +313,6 @@ def find_output_columns(roles, answer_role, compliance_role):
         columns[answer_role] = roles[answer_role][0]
     if compliance_role in roles:
         columns[compliance_role] = roles[compliance_role][0]
+    if references_role and references_role in roles:
+        columns[references_role] = roles[references_role][0]
     return columns
