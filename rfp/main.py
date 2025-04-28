@@ -135,6 +135,7 @@ def main():
             else:
                 logger.warning(f"Failed to load customer index for {customer_folder['name']}")
         
+        # Use the standard QA chain - we'll pass the product focus during question processing
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=retriever,
@@ -143,7 +144,9 @@ def main():
             return_source_documents=True,
             chain_type_kwargs={
                 "question_prompt": QUESTION_PROMPT,
-                "refine_prompt": REFINE_PROMPT
+                "refine_prompt": REFINE_PROMPT,
+                "document_variable_name": "context_str",
+                "initial_response_name": "existing_answer",
             }
         )
 
