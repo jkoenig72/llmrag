@@ -8,45 +8,38 @@ This system processes questions from a Google Sheet, uses a FAISS vector databas
 
 ## Features
 
-- 📊 Google Sheets integration for input/output
-- 🧹 Text cleaning and normalization
+- 📊 Google Sheets integration for input/output with robust error handling
+- 🧹 Text cleaning, normalization, and JSON response formatting
 - 📝 Automatic summarization of long texts
-- 🔍 Vector search using FAISS index
-- 🤖 LLM-powered question answering with Ollama
-- ✅ Compliance rating assignment (FC, PC, NC, NA)
-- 🔄 Batch processing for efficiency
+- 🔍 Vector search using FAISS index with product-specific knowledge
+- 🤖 LLM-powered question answering with multiple provider support (Ollama, llama.cpp)
+- ✅ Compliance rating assignment (FC, PC, NC, NA) with optimistic fallback
+- 🔗 Automatic URL extraction and formatting for references
+- 🚫 Advanced question relevance filtering to identify out-of-scope questions
+- 📝 Detailed question processing logs for troubleshooting
+- 📦 Customer-specific document indices for tailored responses
+- 📎 Enhanced JSON parsing with multiple fallback strategies
+- 🔄 Batch processing with API throttling for efficiency
 
 ## Requirements
 
 - Python 3.8+
 - Google API credentials (JSON file)
 - FAISS index with Salesforce documentation
-- Ollama LLM server
+- LLM server (Ollama or llama.cpp)
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/jkoenig72/llmrag.git
-cd rfp
+git clone https://github.com/yourusername/rag-system.git
+cd rag-system
 ```
 
 2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-
-### Architecture Diagrams
-
-#### Flow Diagram
-![Flow Diagram](../images/rfp_f.png)
-
-This diagram shows the major components of rag module and how they interact.
-
-#### Sequence Diagram
-![Sequence Diagram](../images/rfp_s.png)
-
-This sequence diagram illustrates the typical flow of a rag operation from initialization to completion.
 
 3. Set up environment variables or create a `.env` file:
 ```bash
@@ -57,16 +50,21 @@ GOOGLE_CREDENTIALS_FILE="path/to/credentials.json"
 # Directory Configuration
 BASE_DIR="~/RAG"
 INDEX_DIR="~/faiss_index_sf"
+RFP_DOCUMENTS_DIR="~/RFP_Documents"
+CUSTOMER_INDEX_DIR="~/customer_indices"
 
 # LLM Configuration
-LLM_MODEL="gemma3:12b"
-LLM_BASE_URL="http://localhost:11434"
+LLM_PROVIDER="llamacpp"  # "ollama" or "llamacpp"
+LLM_MODEL="mistral-small3.1"
+OLLAMA_BASE_URL="http://localhost:11434"
+LLAMA_CPP_BASE_URL="http://localhost:8080"
 EMBEDDING_MODEL="intfloat/e5-large-v2"
 
 # Processing Configuration
 SKIP_INDEXING="True"
 BATCH_SIZE="5"
-API_THROTTLE_DELAY="1"
+API_THROTTLE_DELAY="3"
+RETRIEVER_K_DOCUMENTS="8"
 ```
 
 ## Usage
@@ -79,6 +77,13 @@ Run the main script to process all questions in the Google Sheet:
 python main.py
 ```
 
+The system will:
+1. Check if the LLM server is running
+2. Connect to Google Sheets
+3. Ask you to select a starting row and product focus
+4. Process questions, displaying progress
+5. Update the Google Sheet with the answers, compliance ratings, and references
+
 ### Google Sheet Format
 
 The sheet must follow this structure:
@@ -89,8 +94,10 @@ The sheet must follow this structure:
 Example roles:
 - `question`: The question to be answered
 - `context`: Additional context for the question
+- `primary_product`: The primary product focus (optional)
 - `answer`: Where the answer will be written
 - `compliance`: Where the compliance rating will be written
+- `references`: Where reference URLs will be written
 
 ### Compliance Ratings
 
@@ -99,66 +106,143 @@ Example roles:
 - **NC** (Not Compliant): Not possible in Salesforce even with customization
 - **NA** (Not Applicable): Question is out of scope for Salesforce
 
+### Customer-Specific Context
+
+The system supports loading customer-specific documents to provide tailored responses:
+
+1. Create a folder with the customer name in the `RFP_DOCUMENTS_DIR` directory
+2. Add PDF or DOCX files with customer-specific information
+3. When running the system, select the customer folder when prompted
+4. The system will create or use an existing index for those documents
+
+Customer context is combined with product knowledge to provide more accurate answers.
+
 ### Configuration Options
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| SKIP_INDEXING | Skip creating index and use existing one | True |
-| CLEAN_UP_CELL_CONTENT | Apply text cleaning to cells | True |
-| SUMMARIZE_LONG_CELLS | Summarize texts longer than the word limit | True |
-| MAX_WORDS_BEFORE_SUMMARY | Word limit before summarization | 200 |
-| BATCH_SIZE | Number of updates to batch together | 1 |
-| API_THROTTLE_DELAY | Seconds to wait between API calls | 1 |
+|
+ Setting 
+|
+ Description 
+|
+ Default 
+|
+|
+---------
+|
+-------------
+|
+---------
+|
+|
+ SKIP_INDEXING 
+|
+ Skip creating index and use existing one 
+|
+ True 
+|
+|
+ CLEAN_UP_CELL_CONTENT 
+|
+ Apply text cleaning to cells 
+|
+ True 
+|
+|
+ SUMMARIZE_LONG_CELLS 
+|
+ Summarize texts longer than the word limit 
+|
+ True 
+|
+|
+ MAX_WORDS_BEFORE_SUMMARY 
+|
+ Word limit before summarization 
+|
+ 200 
+|
+|
+ BATCH_SIZE 
+|
+ Number of updates to batch together 
+|
+ 5 
+|
+|
+ API_THROTTLE_DELAY 
+|
+ Seconds to wait between API calls 
+|
+ 3 
+|
+|
+ RETRIEVER_K_DOCUMENTS 
+|
+ Number of documents to retrieve from FAISS 
+|
+ 8 
+|
+|
+ CUSTOMER_RETRIEVER_K_DOCUMENTS 
+|
+ Number of customer documents to retrieve 
+|
+ 5 
+|
+|
+ INTERACTIVE_PRODUCT_SELECTION 
+|
+ Allow interactive selection of products to focus on 
+|
+ True 
+|
 
 ## Project Structure
 
 ```
 .
-├── config.py              # Configuration parameters
-├── llm_utils.py           # Utilities for LLM and FAISS
-├── main.py                # Main execution script
-├── prompts.py             # Prompt templates
-├── sheets_handler.py      # Google Sheets integration
-└── text_processing.py     # Text cleaning and summarization
+├── main.py                 # Main orchestration script
+├── config.py               # Configuration parameters
+├── llm_utils.py            # Utilities for LLM and FAISS
+├── llm_wrapper.py          # LLM provider initialization
+├── prompts.py              # Prompt templates
+├── sheets_handler.py       # Google Sheets integration
+├── text_processing.py      # Text cleaning and summarization
+├── question_processor.py   # Question processing logic
+├── product_selector.py     # Product selection and user interaction
+├── customer_docs.py        # Customer document handling
+├── question_logger.py      # Detailed question logging
+└── requirements.txt        # Required Python packages
 ```
 
-## Example Workflow
+## Advanced Features
 
-1. The system loads data from a Google Sheet
-2. Text is cleaned and/or summarized if configured
-3. For each question:
-   - Relevant context is retrieved from the FAISS index
-   - The LLM generates an answer with a compliance rating
-   - Results are written back to the Google Sheet
-4. Processing status is logged to the console and log file
+### Question Relevance Filtering
 
-## Advanced Usage Examples
+The system automatically identifies irrelevant questions (e.g., about weather, colors, history) and marks them as NA without sending to the LLM, saving processing time and improving accuracy.
 
-### Process Only Specific Rows
+### JSON Response Parsing
 
-To process only specific rows, modify `main.py`:
+Multiple strategies are used to extract structured information from LLM responses:
+1. Direct JSON parsing
+2. Extraction from code blocks
+3. Pattern matching for specific fields
+4. Fallback to text-based extraction
 
-```python
-# Filter records to process only specific rows
-filtered_records = [r for r in records if r["sheet_row"] in [5, 8, 12]]
-process_questions(filtered_records, qa_chain, output_columns, sheet_handler)
-```
+### Reference URL Handling
 
-### Custom Compliance Rating Logic
+URLs are automatically extracted from the context and response, formatted with bullet points, and properly stored in the Google Sheet for easy access.
 
-To modify compliance rating determination, edit `extract_json_from_llm_response` in `llm_utils.py`.
+### Detailed Logging
 
-### Implementing Retry Logic
+Each question processed creates a detailed log file with:
+- Original question and context
+- Retrieved information
+- Complete prompt sent to LLM
+- Raw and parsed responses
+- Processing summary
 
-Example of adding retry logic for API calls:
-
-```python
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def invoke_llm_with_retry(llm, prompt):
-    return llm.invoke(prompt)
-```
+Logs are stored in the `question_logs` directory within `BASE_DIR`.
 
 ## Troubleshooting
 
@@ -168,9 +252,11 @@ def invoke_llm_with_retry(llm, prompt):
 
 2. **Google Sheets API errors**: Verify credentials and permissions
 
-3. **LLM connection errors**: Confirm Ollama server is running at LLM_BASE_URL
+3. **LLM connection errors**: Confirm your LLM server is running at the right address and port
+
+4. **Empty answers**: Check the question log file to see the raw LLM response
 
 ### Logging
 
-Logs are written to both the console and a log file at `{BASE_DIR}/rag_processing.log`.
+Logs are written to both the console and a log file at `{BASE_DIR}/rag_processing.log`. Detailed question processing logs are stored in `{BASE_DIR}/question_logs/`.
 
