@@ -20,6 +20,7 @@ This system processes questions from a Google Sheet, uses a FAISS vector databas
 - 📦 Customer-specific document indices for tailored responses
 - 📎 Enhanced JSON parsing with multiple fallback strategies
 - 🔄 Batch processing with API throttling for efficiency
+- 🔄 Refined knowledge aggregation across multiple documents
 
 ## Requirements
 
@@ -32,8 +33,8 @@ This system processes questions from a Google Sheet, uses a FAISS vector databas
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/rag-system.git
-cd rag-system
+git clone https://github.com/jkoenig72/llmrag.git
+cd llmrag
 ```
 
 2. Install dependencies:
@@ -64,40 +65,124 @@ EMBEDDING_MODEL="intfloat/e5-large-v2"
 SKIP_INDEXING="True"
 BATCH_SIZE="5"
 API_THROTTLE_DELAY="3"
-RETRIEVER_K_DOCUMENTS="8"
+RETRIEVER_K_DOCUMENTS="3"
+CUSTOMER_RETRIEVER_K_DOCUMENTS="3"
 ```
 
-## Usage
+## User Guide
 
-### Basic Usage
+### Getting Started
 
-Run the main script to process all questions in the Google Sheet:
+This section provides a step-by-step guide to using the RAG Processing System to answer RFP/RFI questions.
 
-```bash
-python main.py
-```
+#### Step 1: Prepare Your Google Sheet
 
-The system will:
-1. Check if the LLM server is running
-2. Connect to Google Sheets
-3. Ask you to select a starting row and product focus
-4. Process questions, displaying progress
-5. Update the Google Sheet with the answers, compliance ratings, and references
+1. **Create a new Google Sheet** or use the provided template (`Example Sheet.csv`).
+2. **Structure your sheet** with the following format:
+   - **First row:** Headers (e.g., "No.", "Question", "Primary Product", "Answer", etc.)
+   - **Second row:** Include `#answerforge#` in column A, and define roles in other columns:
+     - `question` - Column where questions are stored
+     - `context` - Column for additional context (optional)
+     - `primary_product` - Column for product focus (optional)
+     - `answer` - Column where answers will be written
+     - `compliance` - Column for compliance ratings
+     - `references` - Column for reference URLs (optional)
+   - **Subsequent rows:** Your RFP/RFI questions and data
 
-### Google Sheet Format
+3. **Share the sheet** with the service account email from your Google API credentials.
 
-The sheet must follow this structure:
-1. First row: Headers (any text)
-2. Marker row: Must contain `#answerforge#` in the first column, with role names in other columns
-3. Content rows: Data to be processed
+#### Step 2: Set Up the Example Sheet
 
-Example roles:
-- `question`: The question to be answered
-- `context`: Additional context for the question
-- `primary_product`: The primary product focus (optional)
-- `answer`: Where the answer will be written
-- `compliance`: Where the compliance rating will be written
-- `references`: Where reference URLs will be written
+The included `Example Sheet.csv` can be used as a template:
+
+1. **Import to Google Sheets:**
+   - Open Google Sheets
+   - File > Import > Upload > Select `Example Sheet.csv`
+   - Choose "Replace spreadsheet" or "Create new spreadsheet"
+   - Click "Import data"
+
+2. **Format the sheet correctly:**
+   - Ensure row 2 contains `#answerforge#` in column A
+   - Add appropriate role labels (question, answer, compliance, etc.)
+   - Your sheet should look like:
+
+| | No. | Additional Information | Additional Information2 | Primary Product | Question | Compliant Level | Answer |
+|---|---|---|---|---|---|---|---|
+| #answerforge# | | context | | primary_product | question | compliance | answer |
+| | 1 | | | Communications Cloud | In your Order Management OM module, do you support the concept of a Point of no return PONR? | | |
+| | 2 | | | Service Cloud | Do you support Email to Case functionality? If so explain how it works. | | |
+
+#### Step 3: Configure the System
+
+1. **Edit the configuration file** (`config.py`) or set environment variables with:
+   - Your Google Sheet ID (from the URL)
+   - Path to your Google credentials JSON file
+   - LLM provider settings (Ollama or llama.cpp)
+   - Document retrieval settings
+
+2. **For customer-specific context:**
+   - Create a folder with the customer name in `RFP_DOCUMENTS_DIR`
+   - Add PDFs or DOCX files with customer information
+
+#### Step 4: Run the System
+
+1. **Start your LLM server:**
+   - For llama.cpp: `./llama-server --model /path/to/model.gguf --ctx-size 4096 --port 8080`
+   - For Ollama: Ensure Ollama is running with your model available
+
+2. **Run the main script:**
+   ```bash
+   python main.py
+   ```
+
+3. **Interactive prompts will guide you:**
+   - Select product focus (e.g., "Communications Cloud", "Service Cloud")
+   - Choose customer context folder (if available)
+   - Select starting row number (to resume processing)
+
+4. **Monitor progress:**
+   - The system will display detailed logs showing:
+     - Documents being retrieved
+     - LLM processing steps
+     - Answer extraction
+     - Google Sheet updates
+
+#### Step 5: Review Results
+
+1. **Check your Google Sheet** for generated answers, compliance ratings, and references.
+2. **Review detailed logs** in `{BASE_DIR}/question_logs/` for each question processed.
+3. **Examine refine logs** in `{BASE_DIR}/refine_logs/` to see how answers evolved across documents.
+
+### Processing Flow
+
+1. **Question retrieval:** Questions are loaded from the Google Sheet
+2. **Document retrieval:** 
+   - `RETRIEVER_K_DOCUMENTS` documents from the main FAISS index
+   - Optional `CUSTOMER_RETRIEVER_K_DOCUMENTS` from customer index if selected
+3. **Refine chain processing:**
+   - Initial answer generated from first document(s)
+   - Each additional document refines the answer
+   - Multiple LLM calls create increasingly comprehensive responses
+4. **Answer extraction:** Structured JSON responses are parsed
+5. **Google Sheet update:** Answers, compliance ratings, and references written back
+
+### Optimizing for Best Results
+
+- **Set appropriate document retrieval counts:**
+  ```
+  RETRIEVER_K_DOCUMENTS="3"
+  CUSTOMER_RETRIEVER_K_DOCUMENTS="3"
+  ```
+  These should typically be the same value for balanced results.
+
+- **Structure questions clearly:**
+  - Be specific about which Salesforce product you're asking about
+  - Provide additional context in the context column when needed
+  - Use the primary_product column to ensure proper focus
+
+- **Batch processing:**
+  - Adjust `BATCH_SIZE` in config for more efficient sheet updates
+  - Increase `API_THROTTLE_DELAY` if you hit API rate limits
 
 ### Compliance Ratings
 
@@ -119,83 +204,17 @@ Customer context is combined with product knowledge to provide more accurate ans
 
 ### Configuration Options
 
-|
- Setting 
-|
- Description 
-|
- Default 
-|
-|
----------
-|
--------------
-|
----------
-|
-|
- SKIP_INDEXING 
-|
- Skip creating index and use existing one 
-|
- True 
-|
-|
- CLEAN_UP_CELL_CONTENT 
-|
- Apply text cleaning to cells 
-|
- True 
-|
-|
- SUMMARIZE_LONG_CELLS 
-|
- Summarize texts longer than the word limit 
-|
- True 
-|
-|
- MAX_WORDS_BEFORE_SUMMARY 
-|
- Word limit before summarization 
-|
- 200 
-|
-|
- BATCH_SIZE 
-|
- Number of updates to batch together 
-|
- 5 
-|
-|
- API_THROTTLE_DELAY 
-|
- Seconds to wait between API calls 
-|
- 3 
-|
-|
- RETRIEVER_K_DOCUMENTS 
-|
- Number of documents to retrieve from FAISS 
-|
- 8 
-|
-|
- CUSTOMER_RETRIEVER_K_DOCUMENTS 
-|
- Number of customer documents to retrieve 
-|
- 5 
-|
-|
- INTERACTIVE_PRODUCT_SELECTION 
-|
- Allow interactive selection of products to focus on 
-|
- True 
-|
+| Setting | Description | Default |
+|---------|-------------|---------|
+| SKIP_INDEXING | Skip creating index and use existing one | True |
+| CLEAN_UP_CELL_CONTENT | Apply text cleaning to cells | False |
+| SUMMARIZE_LONG_CELLS | Summarize texts longer than the word limit | False |
+| MAX_WORDS_BEFORE_SUMMARY | Word limit before summarization | 200 |
+| BATCH_SIZE | Number of updates to batch together | 5 |
+| API_THROTTLE_DELAY | Seconds to wait between API calls | 3 |
+| RETRIEVER_K_DOCUMENTS | Number of documents to retrieve from FAISS | 3 |
+| CUSTOMER_RETRIEVER_K_DOCUMENTS | Number of customer documents to retrieve | 3 |
+| INTERACTIVE_PRODUCT_SELECTION | Allow interactive selection of products to focus on | True |
 
 ## Project Structure
 
@@ -217,6 +236,18 @@ Customer context is combined with product knowledge to provide more accurate ans
 
 ## Advanced Features
 
+### Refine Strategy for Knowledge Aggregation
+
+The system uses a sophisticated refine strategy to build comprehensive answers:
+
+1. **Initial Context**: Starts with the first retrieved document
+2. **Iterative Refinement**: Each additional document refines the answer with new information
+3. **Knowledge Accumulation**: Builds a more complete answer with each refinement step
+4. **Product Focus**: Maintains product-specific context throughout refinement
+5. **Multi-step Processing**: Typically 3-5 LLM calls per question (initial + refinements)
+
+This approach ensures that information from multiple documents is combined coherently, providing more detailed and accurate answers than single-document retrieval.
+
 ### Question Relevance Filtering
 
 The system automatically identifies irrelevant questions (e.g., about weather, colors, history) and marks them as NA without sending to the LLM, saving processing time and improving accuracy.
@@ -235,14 +266,22 @@ URLs are automatically extracted from the context and response, formatted with b
 
 ### Detailed Logging
 
-Each question processed creates a detailed log file with:
-- Original question and context
-- Retrieved information
-- Complete prompt sent to LLM
-- Raw and parsed responses
-- Processing summary
+Each question processed creates detailed log files:
 
-Logs are stored in the `question_logs` directory within `BASE_DIR`.
+1. **Question Logs**: Basic processing information
+   - Original question and context
+   - Retrieved information
+   - Complete prompt sent to LLM
+   - Raw and parsed responses
+   - Processing summary
+
+2. **Refine Logs**: Trace the refinement process
+   - Initial answer
+   - Changes made with each document
+   - Source documents used
+   - Metrics on refinement steps
+
+Logs are stored in the `question_logs` and `refine_logs` directories within `BASE_DIR`.
 
 ## Troubleshooting
 
@@ -256,7 +295,37 @@ Logs are stored in the `question_logs` directory within `BASE_DIR`.
 
 4. **Empty answers**: Check the question log file to see the raw LLM response
 
+5. **Document sources showing as "unknown"**: This is just a display issue related to metadata; the system is still using the correct documents
+
+6. **"Missing some input keys" error**: Ensure your prompt templates don't reference missing variables
+
 ### Logging
 
 Logs are written to both the console and a log file at `{BASE_DIR}/rag_processing.log`. Detailed question processing logs are stored in `{BASE_DIR}/question_logs/`.
 
+## Example Outputs
+
+The system generates comprehensive, well-structured answers with compliance ratings:
+
+```
+✅ Row 3 complete
+Question: In your Order Managment OM module, do you support the concept of a Point of no return PONR?
+Product Focus: Communications Cloud
+
+Answer:
+Yes, we support the concept of a Point of No Return (PONR) in our Order Management module within 
+Communications Cloud. You can configure PONR at the order or item level, preventing further modifications 
+once an order or item reaches a specific status. Once a PONR is reached, it cannot be reversed, even if 
+the order or item is voided or canceled, ensuring a clear and irreversible point in the order lifecycle. 
+The PONR feature is fully supported through standard configuration and can be set to trigger at various 
+statuses like 'Completed', 'Running', 'Failed', or 'Fatally Failed'.
+
+Compliance: FC
+
+References (5):
+• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_config.htm&language=en_US
+• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_statuses.htm&language=en_US
+• https://help.salesforce.com/s/articleView?id=ind.order_mgmt_decomposition.htm&language=en_US
+• https://sf-zdocs-cdn-prod.zoominsoftware.com/tdta-order_management-254-13-production-enus/13172a3a-5b30-49ae-979e-e108209443e4/order_management/documents/om_t_ponr.html
+• https://help.salesforce.com/s/articleView?id=ind.comms_t_rules_for_how_point_of_no_returnponrpropagates_through_a_decompositionplan_234475.htm&language=en_US&type=5
+```

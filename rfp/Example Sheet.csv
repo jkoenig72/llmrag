@@ -1,0 +1,105 @@
+,No.,Additional Information,Additional Information2,Primary Product,Question,Compliant Level,Answer
+#answerforge#,,context,context,primary_product,question,compliance,answer
+,1,Communications Cloud,Communications Cloud,Communications Cloud,"In your Order Managment OM module, do you support the concept of a Point of no return PONR.",FC,"Yes, we support the concept of a Point of No Return (PONR) in our Order Management module within the Communications Cloud. You can configure PONR at the order or item level, preventing further modifications once an order or item reaches a specific status. Once a PONR is reached, it cannot be reversed, even if the order or item is voided or canceled, ensuring a clear and irreversible point in the order lifecycle. The PONR feature is fully supported through standard configuration and can be set to trigger at various statuses like 'Completed', 'Running', 'Failed', or 'Fatally Failed'. For order items, the 'Force Supplementals' option (available in the Spring '22 release) can be used to override the PONR. The system proactively notifies CPQ and provides an API to query the PONR status of an order. Cancel requests are submitted in reverse order of initial execution, and rollback plans are generated as per defined rules. For assetized items, contact Vlocity for an un-assetize orchestration item implementation.
+
+References:
+https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_config.htm&language=en_US
+https://help.salesforce.com/s/articleView?id=ind.order_mgmt_order_statuses.htm&language=en_US
+https://help.salesforce.com/s/articleView?id=ind.order_mgmt_decomposition.htm&language=en_US
+https://sf-zdocs-cdn-prod.zoominsoftware.com/tdta-order_management-254-13-production-enus/13172a3a-5b30-49ae-979e-e108209443e4/order_management/documents/om_t_ponr.html
+https://help.salesforce.com/s/articleView?id=ind.comms_t_rules_for_how_point_of_no_returnponrpropagates_through_a_decompositionplan_234475.htm&language=en_US&type=5"
+,2,Order Managment,Industry Order Managment,Communications Cloud,Describe the Order Management functionallity in your solution.,FC,"Salesforce's Order Management enables efficient order tracking and management, supporting creation, modification, cancellation, and fulfillment. It integrates with other systems for real-time updates, with out-of-the-box processes and industry-specific customizations available. Additionally, it allows orchestrating order item dependencies and managing dependency loops for complex order processes. Salesforce's low-code tools facilitate easy workflow customization to meet specific business needs.
+
+References:
+https://help.salesforce.com/s/articleView?id=ind.order_mgmt_industries_order_management.htm&language=en_US&type=5
+https://www.salesforce.com/products/order-management/overview/
+https://help.salesforce.com/s/articleView?id=sf.orchestration_item_dependencies.htm&language=en_US&type=5"
+,3,Service Cloud,Service Cloud,Service Cloud,Do you support Email to Case functionalliy. If so explain how it works.,FC,"Email-to-Case functionality is available out-of-the-box in Service Cloud. It automatically converts incoming emails into cases, capturing sender's details and email content. To enable, go to 'Service Settings' > 'Email-to-Case Settings'. For enhanced security, configure accepting emails from specific domains or IP addresses, which may require additional setup but remains FC. To support replies to these cases via email, set up the 'Auto-Response Rules' feature, which is also FC. This functionality requires Professional, Enterprise, or Unlimited editions, as stated in the 'Required Editions' section.
+
+References:
+https://help.salesforce.com/s/articleView?id=service_email_to_case.htm&language=en_US
+https://trailhead.salesforce.com/content/learn/modules/essentials_email_to_case/essentials_email_to_case_intro
+https://help.salesforce.com/s/articleView?id=sf.email_to_case_setup.htm&type=5
+https://help.salesforce.com/s/articleView?id=service.support_channels_email_to_case.htm&type=5&language=en_US"
+,4,Platform,Platform,Platform,Explain how you can model execute workflows in your platform. Both technical integration workflows and also Screenflows.,FC,"Salesforce enables workflow modeling through Process Builder for technical integration and Screen Flows for user interface. Process Builder automates record updates and triggers flows based on criteria, accessible through standard features. Screen Flows are low-code, user-friendly tools for creating screens with fields, actions, and validations. To enhance data safety in Screen and Autolaunched Flows running in System context, validate inputs and outputs, check for null values, and ensure proper error handling. Restrict user access to data in Screen Flows using record-level access and field-level security. Additionally, specify required fields in Get Records elements and ensure compatibility with Experience Cloud Sites by defining fields and records within flows.
+
+References:
+https://help.salesforce.com/s/articleView?id=process_builder_process_building.htm&type=5
+https://help.salesforce.com/s/articleView?id=flow_screenflow.htm&type=5
+https://help.salesforce.com/s/articleView?id=data_security_data_security_considerations_screen_flows.htm&type=5
+https://help.salesforce.com/s/articleView?id=flow_data_safety_running_in_system_context.htm&type=5"
+,5,Sales Cloud,Sales Cloud,Sales Cloud,"in your CRM solution, do you support Lead to Opportunity process. If so, please describe how it works.",FC,"Sales Cloud supports a robust Lead to Opportunity conversion process. When a lead is qualified, it can be converted into an opportunity with a single click, using the built-in conversion process (FC). During conversion, Sales Cloud allows for custom field mapping (PC), enabling businesses to control which lead data is transferred to the new opportunity record. After conversion, the lead record can be either deleted or archived, based on your configuration (FC). Sales Cloud also offers a bulk lead conversion feature (FC), allowing multiple leads to be converted into opportunities simultaneously. Additionally, Sales Cloud provides customizable sales stages (FC), enabling businesses to tailor their sales pipeline to match their specific sales process. For more complex business needs, Sales Cloud enables customization of the conversion process through Apex triggers and Visualforce pages (PC).
+
+References:
+https://help.salesforce.com/s/articleView?id=sales.sales_core_convert_lead.htm&type=5
+https://trailhead.salesforce.com/content/learn/modules/salesforce_core_concepts/salesforce_core_concepts_lead_opportunity
+https://help.salesforce.com/s/articleView?id=sales.sales_basics_convert_leads.htm&language=en_US&type=5
+https://help.salesforce.com/s/articleView?id=sales.sales_setup_customize_sales_stages.htm&language=en_US&type=5"
+,6,Communications Cloud,Communications Cloud,Communications Cloud,What are the options to implement product catalog synchronization from an external source. How can we sync up with an external Product catalog.,PC,"Product catalog synchronization from an external source in Communications Cloud can be achieved via Application Connectors (FC) or Custom Connectors (PC), as previously mentioned. However, for complex syncing like specific objects and fields, it may require custom development (PC). Salesforce supports syncing from specific objects like Orchestration Item, Order, Order Item, Product, Quote Line Item, and Quote Member. Syncing custom objects and fields not natively supported may require custom development or third-party tools (NC). Additionally, syncing real-time data may not be feasible with current Salesforce features and might necessitate integrating with external ETL tools (NA). To automate the process, consider using the 'External Quote Line Items Data' template to create an app.
+
+References:
+https://help.salesforce.com/s/articleView?id=sf.bi_integrate_connectors_application_group.htm&language=en_US&type=5
+https://help.salesforce.com/s/articleView?id=sf.bi_integrate_connectors_custom.htm&language=en_US&type=5
+https://help.salesforce.com/s/articleView?id=sf.bi_integrate_connectors_salesforce_local_add_remove_objects.htm&language=en_US&type=5
+https://help.salesforce.com/s/articleView?id=ind.comms_internal_and_external_data.htm&language=en_US&type=5#comms_external_quote_line_item_data
+https://help.salesforce.com/s/articleView?id=sf.bi_dataset_create.htm&language=en_US&type=5
+https://www.muleSoft.com/lp/salesforce/integrate-salesforce-anything/"
+,,,,,Is red a better color than green,FC,"Salesforce Communications Cloud supports adding images to quote templates, emails, and enhanced letterheads. This feature is available through standard configuration, allowing you to insert images from your computer or a Salesforce web address. Additionally, you can now also use emojis in your emails, further enhancing your communication. This functionality does not require custom development, making it a standard feature.
+
+References:
+https://help.salesforce.com/s/articleView?id=sales.sales_core.htm&language=en_US&type=5&mode=1
+https://trailhead.salesforce.com/content/learn/modules/salesforce_communications/scc-quote-templates
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_email_images.htm&type=5&language=en_US&source=trailhead"
+,,,,,What do you think about Alexander the Great.,NC,"Salesforce Communications Cloud is a powerful platform for customer interactions, but it doesn't have built-in AI or machine learning capabilities to generate responses or analyze historical figures like Alexander the Great.
+
+References:
+https://www.salesforce.com/products/communications-cloud/overview/"
+,,,,,What will be the weather tomorrow.,NA,"Salesforce Communications Cloud does not natively provide weather forecast information. However, it can integrate with external APIs or services to retrieve and display weather data using Apex code or third-party integrations.
+
+References:
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_overview.htm&type=5
+https://developer.salesforce.com/docs/atlas.en-us.api.meta/api/sforce_api_quickstart.htm"
+,,,,Communications Cloud,"The Enterprise Product Catalog EPC is a critical component for Communication Service Providers CSPs, serving as the central repository for product offerings and enabling customer,centric innovation. While the TM Forums TMF Frameworx provides a standardized blueprint for EPC design and data exposure e.g. TMF 620, integration challenges frequently arise due to distributed product definitions, non,standard partner catalogs, and differing lifecycle states. Successful EPC implementation demands more than data replication it necessitates semantic consistency, robust version control, rigorous governance, and potentially the use of catalog mediation or Master Data Management MDM strategies to ensure accurate and flexible product offerings across diverse systems and partner integrations.",PC,"Salesforce Communications Cloud supports the concept of an Enterprise Product Catalog (EPC) through its CPQ (Configure, Price, Quote) and Product Cloud capabilities. It enables CSPs to manage product offerings, support data standardization using TMF 620, and implement governance and version control. However, native support for catalog mediation or Master Data Management (MDM) strategies requires additional integration or third-party tools.
+
+References:
+https://www.salesforce.com/products/communications-cloud/pricing
+https://help.salesforce.com/s/articleView?id=sf.cpq_overview.htm&type=5"
+,,Customer Segment,Communications Cloud,Experience Cloud,"Which customer segments, sales or service channels, product groups, e.g. can be addressed with your standard e2e solution?",FC,"With Experience Cloud, you can create tailored experiences for various customer segments, sales channels, and product groups. It supports segmentation based on data from Salesforce or external systems, allowing you to create specific experiences for each segment. For instance, you can create separate experiences for different customer segments, like 'New Customers' or 'Loyal Customers', or for various sales channels such as 'Retail' or 'E-commerce'. Similarly, you can cater to different product groups, like 'Apparel' or 'Electronics'. This is achieved using Experience Builder's personalization and segmentation features.
+
+References:
+https://help.salesforce.com/s/articleView?id=sf.experience_builder_segmentation.htm&type=5
+https://trailhead.salesforce.com/content/learn/modules/experience_builder/segmentation"
+,,Customer Segment,Communications Cloud,Communications Cloud,Please explain your key differentiation factors that makes your platform best fit for B2B segment. Is it truly a specialized platform for B2B SME segment or bundle of old modules for the purpose?,FC,"Salesforce Communications Cloud is purpose-built for the B2B segment, particularly SMEs. Key differentiators 1. Omni-channel communication; 2. Seamless CRM integration; 3. Low-code/no-code platform for agility; 4. Robust analytics and AI capabilities; 5. Security, compliance, and scalability features.
+
+References:
+https://www.salesforce.com/products/communications-cloud/overview/
+https://www.salesforce.com/blog/2020/10/communications-cloud-launch.html"
+,,Customer Segment,Communications Cloud,Communications Cloud,Do you have a specialized verticals tailored to a industry customer segments ? Please provide examples of most mature industries segments where you have operations?,FC,"Yes, Salesforce Communications Cloud offers specialized verticals for various industry segments. Mature industry segments include Financial Services, Healthcare, and Retail & Consumer Goods, with tailored solutions and features to meet their unique needs.
+
+References:
+https://www.salesforce.com/products/communication-cloud/industries/financial-services/
+https://www.salesforce.com/products/communication-cloud/industries/healthcare/
+https://www.salesforce.com/products/communication-cloud/industries/retail-consumer-goods/"
+,,Customer Segment,Communications Cloud,Communications Cloud,Please list and explain the capabilities that would make sense to be added to your solution in case of a decision to go for full B2B stack scope not only SME. Provide a description of them.,FC,"For a full B2B stack scope, consider integrating Marketing Cloud Account Engagement for lead management, Sales Cloud for customer relationship management, and Service Cloud for customer service. Also, explore MuleSoft for integration and Tableau for analytics.
+
+References:
+https://www.salesforce.com/products/marketing-cloud/account-engagement/overview/
+https://www.salesforce.com/products/sales-cloud/overview/
+https://www.salesforce.com/products/service-cloud/overview/
+https://www.salesforce.com/products/mulesoft/overview/
+https://www.salesforce.com/products/tableau/overview/"
+,,Customer Segment,Communications Cloud,Communications Cloud,"How does your platform handle sub,segmentation within SME e.g. micro vs. medium and adapt to evolving definitions without service disruption?",FC,"Salesforce Communications Cloud supports dynamic segmentation using Einstein Analytics and Interaction Studio's micro-segmentation capabilities. Segments can be defined and adapted based on evolving definitions without service disruption by leveraging the platform's real-time data integration and low-code tools.
+
+References:
+https://www.salesforce.com/products/marketing-cloud/Interaction-Studio/segmentation/
+https://help.salesforce.com/s/articleView?id=sf.segmentation_overview.htm&type=5"
+,,Customer Segment,Communications Cloud,Communications Cloud,"How do you manage multi,market segmentation requirements local language, currency, regulatory factors in a single platform instance?",FC,"Communications Cloud supports multi-market segmentation through local language and currency customization using translation and locale settings. Regulatory factors can be managed with custom fields, data mapping, and platform-wide compliance features like GDPR and CCPA. Segments can be created and managed using Journey Builder's audience builder and data designer.
+
+References:
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_tips_and_tricks.htm&type=5
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_regulatory_compliance.htm&type=5"
+,,Customer Segment,Communications Cloud,Communications Cloud,"Can your solution handle multiple go,to,market approaches direct, indirect, hybrid simultaneously for different segment tiers?",FC,"Yes, Communications Cloud supports multiple go-to-market approaches simultaneously. You can create and manage separate journeys for direct, indirect, and hybrid approaches using different segment tiers. This can be achieved using the Journey Builder and Audience Studio features.
+
+References:
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_journey_builder_overview.htm&type=5
+https://help.salesforce.com/s/articleView?id=sf.communications_cloud_audience_studio_overview.htm&type=5"
