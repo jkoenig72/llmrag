@@ -7,11 +7,12 @@ from langchain.schema import HumanMessage, Document
 from config import (
     QUESTION_ROLE, CONTEXT_ROLE, ANSWER_ROLE, COMPLIANCE_ROLE, 
     REFERENCES_ROLE, BATCH_SIZE, API_THROTTLE_DELAY, 
-    PRIMARY_PRODUCT_ROLE, LLM_PROVIDER
+    PRIMARY_PRODUCT_ROLE, LLM_PROVIDER,
+    RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
 )
 from prompts import (
     get_question_prompt_with_products, QUESTION_PROMPT_WITH_CUSTOMER_CONTEXT,
-    get_question_prompt_with_products_and_customer, QUESTION_PROMPT
+    get_question_prompt_with_products_and_customer, QUESTION_PROMPT, REFINE_PROMPT
 )
 from llm_utils import (
     extract_json_from_llm_response, validate_compliance_value,
@@ -25,6 +26,9 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                      available_products=None, llm=None, customer_retriever=None, question_logger=None):
     """
     Process each question record using the QA chain with proper refine strategy.
+    
+    Note: For optimal results, RETRIEVER_K_DOCUMENTS and CUSTOMER_RETRIEVER_K_DOCUMENTS
+    should have the same value (e.g., both set to 3).
     """
     batch_updates = []
     
@@ -81,34 +85,18 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             print(f"[CHAIN] Question: {question[:100]}...")
             print(f"[CHAIN] Product focus: {product_focus_str}")
             
-            # FIXED: Create a clean input dictionary that doesn't include any unexpected variables
-            # that could cause errors in the refine chain
-            chain_input = {
-                "question": enriched_question,
-                # No metadata dictionary - we'll handle products directly
-            }
+            # SIMPLIFIED: Fetch documents from both sources
+            print(f"[CHAIN] Retrieving product documents...")
+            product_docs = qa_chain.retriever.get_relevant_documents(enriched_question)
+            print(f"[CHAIN] Retrieved {len(product_docs)} product documents")
             
-            # Initialize source documents and chain_result for later use
-            source_documents = []
-            chain_result = None
-            
-            # IMPROVED: Track retrieval and refinement steps
-            print(f"[CHAIN] Retrieving relevant documents...")
-            
-            # Pre-fetch documents to log them
-            # This doesn't change the chain execution but gives us visibility
-            retriever_docs = qa_chain.retriever.get_relevant_documents(enriched_question)
-            print(f"[CHAIN] Retrieved {len(retriever_docs)} documents")
-            source_documents = retriever_docs  # Store for logging
-            
-            # IMPROVED: Log top document sources for visibility using available metadata
-            for idx, doc in enumerate(retriever_docs[:3]):
+            # Log product document sources
+            for idx, doc in enumerate(product_docs[:3]):
                 # Use product or tag field if source isn't available
                 source = doc.metadata.get('source', 
                                         doc.metadata.get('product', 
                                                        doc.metadata.get('tag', 'unknown')))
-                score = doc.metadata.get('score', 'N/A')
-                print(f"[CHAIN] Document {idx+1}: {source} (score: {score})")
+                print(f"[CHAIN] Product Document {idx+1}: {source}")
                 
                 # Also log the document metadata for debugging
                 metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() if k in ['product', 'tag', 'source']])
@@ -117,16 +105,40 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 
                 print(f"[CHAIN] Preview: {doc.page_content[:100]}...")
             
-            print(f"[CHAIN] Starting refine chain execution with {len(retriever_docs)} documents")
+            # Optional: Fetch customer documents if customer retriever is available
+            customer_docs = []
+            if customer_retriever:
+                print(f"[CHAIN] Retrieving customer documents...")
+                customer_docs = customer_retriever.get_relevant_documents(enriched_question)
+                print(f"[CHAIN] Retrieved {len(customer_docs)} customer documents")
+                
+                # Log customer document sources
+                for idx, doc in enumerate(customer_docs[:3]):
+                    source = f"Customer: {doc.metadata.get('source', 'unknown')}"
+                    print(f"[CHAIN] Customer Document {idx+1}: {source}")
+                    print(f"[CHAIN] Preview: {doc.page_content[:100]}...")
+            
+            # SIMPLIFIED: Prepare documents for refine chain
+            # Start with one product document + one customer document (if available)
+            # Then process remaining documents one by one
+            
+            # Record start time for performance measurement
             start_time = time.time()
             
-            # FIXED: Create a custom LLMChain for this specific question that includes product focus
-            # This is the clean approach that works with the refine chain
+            # Create the initial prompt with first product document and customer document (if available)
+            initial_context = ""
+            if product_docs:
+                initial_context += product_docs[0].page_content
+            
+            if customer_docs:
+                # Add separator if we already have product context
+                if initial_context:
+                    initial_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
+                initial_context += customer_docs[0].page_content
+            
+            # Create the appropriate prompt with product focus if specified
             if products_to_focus:
-                # Generate a custom prompt with specific product names
                 product_str = ", ".join(products_to_focus)
-                
-                # Direct invocation approach - use simple question and direct LLM call first
                 prompt_text = f"""
 You are a Senior Solution Engineer at Salesforce, with deep expertise in {product_str}.
 
@@ -137,8 +149,11 @@ CRITICAL INSTRUCTIONS:
 4. The "references" field must be an array of relevant Salesforce URLs from the context
 5. Be OPTIMISTIC about compliance ratings - if it can be achieved with configuration or low-code tools, mark it as FC
 
-Does {product_str} support the following:
+Use the following context to answer the question:
 
+{initial_context}
+
+Question:
 {enriched_question}
 
 Format your response as a JSON with the following structure:
@@ -148,69 +163,192 @@ Format your response as a JSON with the following structure:
   "references": ["URL1", "URL2"]
 }}
 """
-                
-                # Use direct LLM invocation instead of the chain
-                print(f"[DIRECT] Using direct LLM invocation with product focus: {product_str}")
-                start_time = time.time()
-                direct_response = llm.invoke(prompt_text)
-                chain_time = time.time() - start_time
-                print(f"[DIRECT] LLM invocation completed in {chain_time:.2f} seconds")
-                
-                if hasattr(direct_response, "content"):
-                    raw_answer = direct_response.content
-                else:
-                    raw_answer = str(direct_response)
-                
-                # Create a mock chain_result for compatibility with the rest of the code
-                chain_result = {
-                    "result": raw_answer,
-                    "source_documents": source_documents
-                }
             else:
-                # Use the standard chain without product focus
-                print(f"[CHAIN] Using standard chain without product focus")
-                chain_result = qa_chain.invoke(chain_input)
-                chain_time = time.time() - start_time
-                print(f"[CHAIN] Chain execution completed in {chain_time:.2f} seconds")
+                # Use a simpler prompt without product focus
+                prompt_text = f"""
+You are a Senior Solution Engineer at Salesforce.
+
+CRITICAL INSTRUCTIONS:
+1. Your ENTIRE response must be ONLY a valid JSON object - nothing else
+2. The "answer" field MUST contain NORMAL PLAIN TEXT ONLY - NO JSON STRUCTURES, NO LISTS, NO OBJECTS
+3. NEVER put JSON, code blocks, or structured data inside the "answer" field
+4. The "references" field must be an array of relevant Salesforce URLs from the context
+5. Be OPTIMISTIC about compliance ratings - if it can be achieved with configuration or low-code tools, mark it as FC
+
+Use the following context to answer the question:
+
+{initial_context}
+
+Question:
+{enriched_question}
+
+Format your response as a JSON with the following structure:
+{{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Write ONLY a clear explanation in 5-10 sentences. NO JSON HERE!",
+  "references": ["URL1", "URL2"]
+}}
+"""
+            
+            # Generate initial answer
+            print(f"[CHAIN] Generating initial answer with first document(s)")
+            initial_response = llm.invoke(prompt_text)
+            
+            if hasattr(initial_response, "content"):
+                current_answer = initial_response.content
+            else:
+                current_answer = str(initial_response)
+            
+            print(f"[CHAIN] Initial answer generated ({len(current_answer)} chars)")
+            
+            # Parse the initial answer
+            try:
+                current_parsed = json.loads(current_answer)
+            except json.JSONDecodeError:
+                # If parsing fails, try to extract JSON using fallback
+                current_parsed = extract_json_from_llm_response(current_answer)
+                if not current_parsed:
+                    current_parsed = {
+                        "answer": current_answer,
+                        "compliance": "PC",
+                        "references": []
+                    }
+            
+            # Prepare the remaining documents for refinement
+            remaining_docs = []
+            
+            # Add remaining product docs (skip the first one which we already used)
+            for doc in product_docs[1:]:
+                remaining_docs.append(("product", doc))
+            
+            # Add remaining customer docs (skip the first one if it was used)
+            if customer_docs and len(customer_docs) > 1:
+                for doc in customer_docs[1:]:
+                    remaining_docs.append(("customer", doc))
+            
+            # Keep track of refine steps
+            refine_steps = 1
+            
+            # Process each remaining document
+            for doc_type, doc in remaining_docs:
+                refine_steps += 1
+                print(f"[CHAIN] Refinement step {refine_steps} using {doc_type} document")
                 
-                # Extract the result
-                if isinstance(chain_result, dict):
-                    if "result" in chain_result:
-                        raw_answer = chain_result["result"]
-                        print(f"[CHAIN] Got result from chain result dictionary")
-                    elif "answer" in chain_result:
-                        raw_answer = chain_result["answer"]
-                        print(f"[CHAIN] Got answer from chain result dictionary")
-                    else:
-                        # Fall back to string representation
-                        raw_answer = str(chain_result)
-                        print(f"[CHAIN] Converted dictionary result to string")
-                elif isinstance(chain_result, str):
-                    raw_answer = chain_result
-                    print(f"[CHAIN] Got string result from chain")
-                    # Create a mock chain_result for consistency
-                    chain_result = {
-                        "result": raw_answer,
-                        "source_documents": source_documents
-                    }
+                # Create refine prompt
+                if products_to_focus:
+                    product_str = ", ".join(products_to_focus)
+                    refine_prompt = f"""
+You are refining an RFI response about Salesforce, particularly regarding {product_str}.
+
+CRITICAL INSTRUCTIONS:
+1. Return ONLY a valid JSON object with the EXACT same structure as the existing answer
+2. The "answer" field must contain ONLY plain text - NO JSON, NO code blocks
+3. Your task is to ENHANCE the existing answer with new information, not replace it entirely 
+
+Carefully analyze the new context and update ONLY if the new information:
+1. Contradicts your previous answer with more accurate information
+2. Provides more specific details about Salesforce capabilities
+3. Changes the compliance level based on new evidence
+4. Adds relevant references not previously included
+
+Compliance levels:
+- FC: Available through standard features, configuration, or low-code tools
+- PC: Requires significant custom development
+- NC: Not possible even with customization
+- NA: Out of scope
+
+Existing JSON Answer:
+{json.dumps(current_parsed, indent=2)}
+
+New Context:
+{doc.page_content}
+
+Question:
+{enriched_question}
+
+Return ONLY this JSON structure (with your refinements):
+{{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Refined explanation in plain text only (5-10 sentences)",
+  "references": ["URL1", "URL2"]
+}}
+"""
                 else:
-                    raw_answer = str(chain_result)
-                    print(f"[CHAIN] Converted unknown result type to string")
-                    # Create a mock chain_result for consistency
-                    chain_result = {
-                        "result": raw_answer,
-                        "source_documents": source_documents
-                    }
+                    # Generic refine prompt without product focus
+                    refine_prompt = f"""
+You are refining an RFI response about Salesforce.
+
+CRITICAL INSTRUCTIONS:
+1. Return ONLY a valid JSON object with the EXACT same structure as the existing answer
+2. The "answer" field must contain ONLY plain text - NO JSON, NO code blocks
+3. Your task is to ENHANCE the existing answer with new information, not replace it entirely 
+
+Carefully analyze the new context and update ONLY if the new information:
+1. Contradicts your previous answer with more accurate information
+2. Provides more specific details about Salesforce capabilities
+3. Changes the compliance level based on new evidence
+4. Adds relevant references not previously included
+
+Compliance levels:
+- FC: Available through standard features, configuration, or low-code tools
+- PC: Requires significant custom development
+- NC: Not possible even with customization
+- NA: Out of scope
+
+Existing JSON Answer:
+{json.dumps(current_parsed, indent=2)}
+
+New Context:
+{doc.page_content}
+
+Question:
+{enriched_question}
+
+Return ONLY this JSON structure (with your refinements):
+{{
+  "compliance": "FC|PC|NC|NA",
+  "answer": "Refined explanation in plain text only (5-10 sentences)",
+  "references": ["URL1", "URL2"]
+}}
+"""
+                
+                # Get refined answer
+                refine_response = llm.invoke(refine_prompt)
+                
+                if hasattr(refine_response, "content"):
+                    refined_answer = refine_response.content
+                else:
+                    refined_answer = str(refine_response)
+                
+                print(f"[CHAIN] Refined answer generated ({len(refined_answer)} chars)")
+                
+                # Parse the refined answer
+                try:
+                    refined_parsed = json.loads(refined_answer)
+                    # Update current parsed answer for next iteration
+                    current_parsed = refined_parsed
+                except json.JSONDecodeError:
+                    # If parsing fails, try to extract JSON using fallback
+                    refined_parsed = extract_json_from_llm_response(refined_answer)
+                    if refined_parsed:
+                        current_parsed = refined_parsed
+                    # If extraction fails, keep current parsed answer
+            
+            # Measure total execution time
+            chain_time = time.time() - start_time
+            print(f"[CHAIN] Chain execution completed in {chain_time:.2f} seconds with {refine_steps} steps")
+            
+            # Extract the final result - use current_parsed as our final answer
+            raw_answer = json.dumps(current_parsed, indent=2)
             
             print(f"[RESULT] Raw answer length: {len(raw_answer)}")
             print(f"[RESULT] Raw answer preview: {raw_answer[:200]}...")
             
-            # IMPROVED: Enhanced JSON parsing with better error handling
-            print(f"[PARSING] Parsing LLM response")
+            # IMPROVED: Ensure our final answer is formatted correctly
             try:
-                parsed = StrictJSONOutputParser.parse(raw_answer)
+                parsed = current_parsed
                 if not parsed.get("answer"):
-                    print(f"[PARSING] Primary parsing failed, using fallback extraction")
+                    print(f"[PARSING] Missing answer field, using fallback extraction")
                     fallback_parsed = extract_json_from_llm_response(raw_answer)
                     if fallback_parsed.get("answer"):
                         print(f"[PARSING] Fallback parsing succeeded")
@@ -301,23 +439,26 @@ Format your response as a JSON with the following structure:
             
             # IMPROVED: Log the question processing details if logger available
             if question_logger:
-                # FIXED: Safely extract source documents
+                # Gather sources from both product and customer docs
                 sources = []
-                if chain_result and isinstance(chain_result, dict) and "source_documents" in chain_result:
-                    sources = []
-                    for doc in chain_result["source_documents"]:
-                        # Use the most descriptive metadata field available
-                        source = doc.metadata.get('source', 
-                                                doc.metadata.get('product', 
-                                                               doc.metadata.get('tag', 'unknown')))
-                        sources.append(source)
+                for doc in product_docs:
+                    source = doc.metadata.get('source', 
+                                            doc.metadata.get('product', 
+                                                           doc.metadata.get('tag', 'unknown')))
+                    sources.append(source)
+                
+                for doc in customer_docs:
+                    source = f"Customer: {doc.metadata.get('source', 'unknown')}"
+                    sources.append(source)
                 
                 # Create structured log entry
                 log_data = {
                     "question": question,
                     "product_focus": ", ".join(products_to_focus) if products_to_focus else "None",
                     "refine_chain_time": chain_time,
-                    "documents_retrieved": len(retriever_docs),
+                    "refine_steps": refine_steps,
+                    "product_documents": len(product_docs),
+                    "customer_documents": len(customer_docs),
                     "answer": answer,
                     "compliance": compliance,
                     "references": references,
