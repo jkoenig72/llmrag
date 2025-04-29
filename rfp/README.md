@@ -197,10 +197,8 @@ Compliance: FC
 References (1):
 • https://help.salesforce.com/s/articleView?id=ind.comms_t_rules_for_how_point_of_no_returnponrpropagates_through_a_decompositionplan_234475.htm&language=en_US&type=5
 ```
-<<<<<<< HEAD
-=======
 
-**License and Contributions**
+## License and Contributions
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
->>>>>>> 8f29b56 (Update)
+
