@@ -2,7 +2,7 @@
 
 LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to automate the collection, processing, and querying of Salesforce and MuleSoft documentation, but it can easly used to crawl any other platform as long vaild and solid information is available on the web. 
 
-The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama based LLMs directly into a Google sheet. About local LLMs - my basics tests so far shown its an advantage if the LLM is capable to generate JSON output, there I have seen best results with llama.cpp "Instruct" models like
+The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama/llama.cpp based LLMs directly into a Google sheet. About local LLMs - my basics tests so far shown its an advantage if the LLM is capable to generate JSON output, there I have seen best results with llama.cpp "Instruct" models like
 
 https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3 
 or 
