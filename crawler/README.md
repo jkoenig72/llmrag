@@ -159,6 +159,6 @@ To support a new page type:
 - **Performance Problems**: Adjust the multithreading configuration in `main.py`
 - **Rate Limiting**: Add delays between requests in `browser_utils.py`
 
-## License and Contributions**
+## License and Contributions
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
