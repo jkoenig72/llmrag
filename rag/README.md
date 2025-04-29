@@ -168,6 +168,6 @@ You can customize the system by modifying the configuration in `config.py`:
 - **Slow Performance**: Check GPU detection, consider installing faiss-gpu
 - **File Processing Errors**: Verify markdown files have valid YAML frontmatter
 
-**License and Contributions**
+## License and Contributions
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
