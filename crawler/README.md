@@ -17,6 +17,18 @@ The crawler performs a breadth-first search on documentation pages, processes th
 - **Customizable depth and limits**: Configure how deep to crawl and how many pages to process
 - **Robust error handling**: Gracefully handles network issues and malformed pages
 
+## Architecture Diagrams
+
+### Flow Diagram
+![Flow Diagram](../images/crawler_f.png)
+
+This diagram shows the major components of the crawler and how they interact.
+
+### Sequence Diagram
+![Sequence Diagram](../images/crawler_s.png)
+
+This sequence diagram illustrates the typical flow of a crawl operation from initialization to completion.
+
 ## Requirements
 
 - Python 3.8+
@@ -63,7 +75,20 @@ This will:
 4. Generate markdown files organized by product
 5. Create summary logs with metrics
 
-### Example Output Structure
+## Project Structure
+
+The crawler is organized into several Python modules:
+
+- `main.py`: Main entry point and thread coordination
+- `crawler.py`: Core crawling logic using breadth-first search
+- `browser_utils.py`: Browser interaction utilities
+- `content_processor.py`: HTML cleaning and markdown conversion
+- `page_handlers.py`: Specialized handlers for different page types
+- `file_utils.py`: File and path operations
+- `logger.py`: Logging configuration and summary generation
+- `config.py`: Configuration settings
+
+## Output Structure
 
 ```
 RAG_Collection/
@@ -82,7 +107,7 @@ RAG_Collection/
 └── skipped_404.log
 ```
 
-### Markdown Output Format
+## Markdown Output Format
 
 Each output file includes:
 - YAML frontmatter with metadata
@@ -114,31 +139,6 @@ source_url: "https://help.salesforce.com/s/articleView?id=sales.sales_get_starte
 Sales Cloud is a customer relationship management (CRM) platform...
 ```
 
-## Architecture
-
-The crawler is organized into several Python modules:
-
-- `main.py`: Main entry point and thread coordination
-- `crawler.py`: Core crawling logic using breadth-first search
-- `browser_utils.py`: Browser interaction utilities
-- `content_processor.py`: HTML cleaning and markdown conversion
-- `page_handlers.py`: Specialized handlers for different page types
-- `file_utils.py`: File and path operations
-- `logger.py`: Logging configuration and summary generation
-- `config.py`: Configuration settings
-
-### Architecture Diagrams
-
-#### Flow Diagram
-![Flow Diagram](../images/crawler_f.png)
-
-This diagram shows the major components of the crawler and how they interact.
-
-#### Sequence Diagram
-![Sequence Diagram](../images/crawler_s.png)
-
-This sequence diagram illustrates the typical flow of a crawl operation from initialization to completion.
-
 ## Extending the Crawler
 
 ### Adding New Product Categories
@@ -152,3 +152,13 @@ To support a new page type:
 2. Implement a new handler function in `page_handlers.py`
 3. Update the `process_page()` function to use your new handler
 
+## Troubleshooting
+
+- **Chrome Driver Issues**: Check that your Chrome browser version is compatible with the WebDriver
+- **Network Errors**: Verify network connectivity to Salesforce domains
+- **Performance Problems**: Adjust the multithreading configuration in `main.py`
+- **Rate Limiting**: Add delays between requests in `browser_utils.py`
+
+**License and Contributions**
+
+Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.

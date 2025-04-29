@@ -1,4 +1,3 @@
-
 # LLMRAG: Retrieval-Augmented Generation Pipeline for Salesforce Documentation
 
 LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to automate the collection, processing, and querying of Salesforce and MuleSoft documentation. The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama based LLMs directly into a Google sheet.
@@ -7,24 +6,32 @@ LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to auto
 
 The project consists of three main modules:
 
-- crawler/: Multithreaded documentation crawler to collect and convert Salesforce and MuleSoft documentation into markdown format.
-- rag/: Document processor that builds vector embeddings (using Hugging Face models) and manages FAISS indices for semantic search.
-- rfp/: Question answering system integrated with Google Sheets for RFI/RFP workflows, including compliance scoring (FC, PC, NC, NA).
+- **crawler/**: Multithreaded documentation crawler to collect and convert Salesforce and MuleSoft documentation into markdown format.
+- **rag/**: Document processor that builds vector embeddings (using Hugging Face models) and manages FAISS indices for semantic search.
+- **rfp/**: Question answering system integrated with Google Sheets for RFI/RFP workflows, including compliance scoring (FC, PC, NC, NA).
 
 This architecture enables efficient retrieval-augmented generation workflows, ideal for answering complex questions about Salesforce capabilities with reliable grounding in product documentation.
 
 ## Features
 
-- Multithreaded crawling and markdown conversion with YAML frontmatter.
-- Vector embeddings and FAISS-powered semantic search.
-- Google Sheets integration for structured Q&A workflows.
-- Compliance scoring system (Fully Compliant, Partially Compliant, Not Compliant, Not Applicable).
-- GPU acceleration support for faster processing.
-- Batch processing and retry logic for robust automation.
+- **Multithreaded crawling** and markdown conversion with YAML frontmatter
+- **Vector embeddings** and FAISS-powered semantic search
+- **Google Sheets integration** for structured Q&A workflows
+- **Compliance scoring system** (Fully Compliant, Partially Compliant, Not Compliant, Not Applicable)
+- **GPU acceleration** support for faster processing
+- **Batch processing** and retry logic for robust automation
 
-The current faiss index vector db is build with infos from help.salesforce and trailhead around those products
+## Architecture Diagrams
 
-## Features
+Architecture and sequence diagrams are available in the images/ folder:
+
+- crawler_f.png, crawler_s.png (Crawler module flow and sequence diagrams)
+- rag_f.png, rag_s.png (RAG module flow and sequence diagrams)
+- rfp_f.png, rfp_s.png (RFP module flow and sequence diagrams)
+
+## Current Vector Database Coverage
+
+The current FAISS index vector database is built with information from help.salesforce and trailhead around these products:
 
 - Sales Cloud
 - ServiceCloud
@@ -36,10 +43,10 @@ The current faiss index vector db is build with infos from help.salesforce and t
 - Marketing Cloud
 - MuleSoft
 
-Total vectors: 112,188
-Vector dimension: 1024
-Index type: Flat
-Index size: 550.05 MB
+Total vectors: 112,188  
+Vector dimension: 1024  
+Index type: Flat  
+Index size: 550.05 MB  
 GPU usage: Available and detected
 
 Product distribution:
@@ -53,20 +60,7 @@ Product distribution:
   - Experience Cloud: 3,978 vectors
   - MuleSoft: 2,943 vectors
 
-### !!! A build index is not part of this repo. Build one yourself or ping me. !!! 
-
-## Project Structure
-
-```
-llmrag/
-├── crawler/           # Documentation crawler
-├── rag/               # Vector embedding and RAG processing
-├── rfp/               # Compliance Q&A with Google Sheets integration
-├── images/            # Architecture diagrams
-├── .gitignore         # Ignore list, including env.sh
-├── env.template.sh    # Example environment configuration (copy to env.sh)
-└── README.md          # Project overview (this file)
-```
+### !!! A built index is not part of this repo. Build one yourself or ping me. !!! 
 
 ## Requirements
 
@@ -116,23 +110,34 @@ cd rfp
 python main.py
 ```
 
-## Architecture Diagrams
+## Project Structure
 
-Architecture and sequence diagrams are available in the images/ folder:
-
-- crawler_f.png, crawler_s.png
-- rag_f.png, rag_s.png
-- rfp_f.png, rfp_s.png
+```
+llmrag/
+├── crawler/           # Documentation crawler
+├── rag/               # Vector embedding and RAG processing
+├── rfp/               # Compliance Q&A with Google Sheets integration
+├── images/            # Architecture diagrams
+├── .gitignore         # Ignore list, including env.sh
+├── env.template.sh    # Example environment configuration (copy to env.sh)
+└── README.md          # Project overview (this file)
+```
 
 ## Compliance Scoring
 
 The system assigns compliance levels to each answer:
 
-- FC: Fully Compliant (out-of-the-box or standard config)
-- PC: Partially Compliant (requires custom development)
-- NC: Not Compliant (not possible even with customization)
-- NA: Not Applicable (question is out of scope)
+- **FC**: Fully Compliant (out-of-the-box or standard config)
+- **PC**: Partially Compliant (requires custom development)
+- **NC**: Not Compliant (not possible even with customization)
+- **NA**: Not Applicable (question is out of scope)
 
-## License and Contributions
+## Troubleshooting
+
+- If the crawler fails to connect to Salesforce documentation sites, ensure your network connection is stable and not restricted.
+- For GPU acceleration issues with FAISS, verify that you have installed faiss-gpu correctly and your system has compatible drivers.
+- If experiencing rate limits with Google Sheets API, adjust the API_THROTTLE_DELAY in the configuration.
+
+**License and Contributions**
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
