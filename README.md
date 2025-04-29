@@ -4,10 +4,11 @@ LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to auto
 
 The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama based LLMs directly into a Google sheet. About local LLMs - my basics tests so far shown its an advantage if the LLM is capable to generate JSON output, there I have seen best results with llama.cpp "Instruct" models like
 
-https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3 or 
+https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3 
+or 
 https://huggingface.co/starble-dev/Mistral-Nemo-12B-Instruct-2407-GGUF
 
-Simple start them in server mode and let teh scripts talk to them on localhost via HTTP. 
+Simple start them in server mode and let the scripts talk to them on localhost via HTTP. 
 
 ## Overview
 
