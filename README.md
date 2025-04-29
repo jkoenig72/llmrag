@@ -1,6 +1,8 @@
 # LLMRAG: Retrieval-Augmented Generation Pipeline for Salesforce Documentation
 
-LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to automate the collection, processing, and querying of Salesforce and MuleSoft documentation. The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama based LLMs directly into a Google sheet.
+LLMRAG is a modular Retrieval-Augmented Generation (RAG) system designed to automate the collection, processing, and querying of Salesforce and MuleSoft documentation, but it can easly used to crawl any other platform as long vaild and solid information is available on the web. 
+
+The system enables high-quality, offline-ready markdown generation, vector-based search, and structured question answering with compliance ratings by using small, local ollama based LLMs directly into a Google sheet.
 
 ## Overview
 
