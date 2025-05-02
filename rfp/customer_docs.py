@@ -12,29 +12,17 @@ from embedding_manager import EmbeddingManager
 logger = logging.getLogger(__name__)
 
 def scan_rfp_folders() -> List[Dict[str, any]]:
-    """
-    Scan the RFP documents directory for customer folders and their contents.
-    
-    Returns
-    -------
-    List[Dict[str, any]]
-        List of dictionaries containing folder information
-    """
     folders = []
     
-    # Ensure the RFP documents directory exists
     os.makedirs(RFP_DOCUMENTS_DIR, exist_ok=True)
     
-    # Scan for subdirectories
     for folder_name in os.listdir(RFP_DOCUMENTS_DIR):
         folder_path = os.path.join(RFP_DOCUMENTS_DIR, folder_name)
         
         if os.path.isdir(folder_path):
-            # Count documents
             pdf_count = len(glob.glob(os.path.join(folder_path, "*.pdf")))
             docx_count = len(glob.glob(os.path.join(folder_path, "*.docx")))
             
-            # Check if index exists
             index_path = os.path.join(CUSTOMER_INDEX_DIR, f"{folder_name}_index")
             has_index = os.path.exists(index_path)
             
@@ -51,21 +39,6 @@ def scan_rfp_folders() -> List[Dict[str, any]]:
     return sorted(folders, key=lambda x: x["name"])
 
 def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
-    """
-    Load and process all PDF and DOCX files from a customer folder.
-    
-    Parameters
-    ----------
-    folder_path : str
-        Path to the customer documents folder
-        
-    Returns
-    -------
-    Tuple[List, Dict[str, int]]
-        A tuple containing:
-        - List of processed document chunks
-        - Stats dictionary with processing information
-    """
     documents = []
     stats = {
         "total_files": 0,
@@ -77,7 +50,6 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
         "total_chunks": 0
     }
     
-    # Identify all documents
     pdf_files = glob.glob(os.path.join(folder_path, "*.pdf"))
     docx_files = glob.glob(os.path.join(folder_path, "*.docx"))
     
@@ -88,7 +60,6 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
     print(f"\nProcessing Customer Documents")
     print(f"Found {stats['total_files']} documents: {stats['pdf_files']} PDF files, {stats['docx_files']} DOCX files")
     
-    # Process PDFs
     for i, pdf_file in enumerate(pdf_files):
         try:
             print(f"Processing file {i+1}/{stats['total_files']}: {os.path.basename(pdf_file)} (PDF)")
@@ -103,7 +74,6 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
             logger.error(f"Failed to load PDF {pdf_file}: {e}")
             print(f"  ❌ Error loading PDF: {e}")
     
-    # Process DOCX files
     for i, docx_file in enumerate(docx_files):
         try:
             print(f"Processing file {i+1+stats['pdf_files']}/{stats['total_files']}: {os.path.basename(docx_file)} (DOCX)")
@@ -118,7 +88,6 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
             logger.error(f"Failed to load DOCX {docx_file}: {e}")
             print(f"  ❌ Error loading DOCX: {e}")
     
-    # Split documents into chunks
     print("\nSplitting documents into chunks...")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -135,24 +104,6 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
     return split_docs, stats
 
 def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> Optional[str]:
-    """
-    Create a FAISS index from customer documents and save it.
-    Uses EmbeddingManager for memory-efficient embedding creation.
-    
-    Parameters
-    ----------
-    folder_name : str
-        Name of the customer folder
-    folder_path : str
-        Path to the customer documents
-    use_cpu : bool, default False
-        If True, force use of CPU for embeddings
-        
-    Returns
-    -------
-    Optional[str]
-        The path to the created index or None if creation failed
-    """
     try:
         print("\n" + "="*80)
         print(f"CREATING CUSTOMER INDEX: {folder_name}")
@@ -160,14 +111,11 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
         
         start_time = time.time()
         
-        # Ensure the customer index directory exists
         os.makedirs(CUSTOMER_INDEX_DIR, exist_ok=True)
         
-        # Create a flag file to indicate if this index was created with CPU
         index_path = os.path.join(CUSTOMER_INDEX_DIR, f"{folder_name}_index")
         flag_file = os.path.join(index_path, "_created_with_cpu") if use_cpu else None
         
-        # Load documents
         print("\n📂 Loading and processing documents...")
         documents, stats = load_customer_documents(folder_path)
         
@@ -175,26 +123,20 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
             print(f"\n❌ No valid documents found in {folder_path}")
             return None
         
-        # Create embeddings and index using EmbeddingManager
         print(f"\n🔢 Creating embeddings using {EMBEDDING_MODEL}...")
         embedding_manager = EmbeddingManager(EMBEDDING_MODEL)
         
-        # Create FAISS index with progress indication
         print(f"\n🧠 Building FAISS vector index...")
         print(f"Processing {len(documents)} document chunks...")
         
-        # Process in batches just for progress display
-        batch_size = max(1, len(documents) // 10)  # Show 10 progress updates
+        batch_size = max(1, len(documents) // 10)
         
-        # Just for progress display
         for i in range(0, len(documents), batch_size):
             current_progress = min(i + batch_size, len(documents))
             print(f"Progress: {current_progress}/{len(documents)} chunks ({(current_progress/len(documents))*100:.1f}%)")
         
-        # Create index from all documents using the embedding manager
         result_path = embedding_manager.create_index(documents, index_path, use_cpu=use_cpu, db_name="Customer DB")
         
-        # Create flag file if using CPU
         if flag_file and use_cpu and result_path:
             with open(flag_file, 'w') as f:
                 f.write("This index was created with CPU and should be loaded with CPU.")
@@ -203,7 +145,6 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
         end_time = time.time()
         processing_time = end_time - start_time
         
-        # Final summary
         print("\n" + "="*80)
         print(f"INDEX CREATION SUMMARY: {folder_name}")
         print("="*80)
@@ -228,20 +169,6 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
         return None
 
 def load_customer_index(folder_name: str) -> Optional[str]:
-    """
-    Verify an existing customer FAISS index exists.
-    We don't actually load the index here anymore, just verify it exists.
-    
-    Parameters
-    ----------
-    folder_name : str
-        Name of the customer folder
-        
-    Returns
-    -------
-    Optional[str]
-        The path to the verified index or None if verification failed
-    """
     try:
         index_path = os.path.join(CUSTOMER_INDEX_DIR, f"{folder_name}_index")
         
@@ -251,14 +178,12 @@ def load_customer_index(folder_name: str) -> Optional[str]:
         
         print(f"\n🔍 Verifying customer index for {folder_name}...")
         
-        # Check if this index was created with CPU
         cpu_flag_file = os.path.join(index_path, "_created_with_cpu")
         use_cpu = os.path.exists(cpu_flag_file)
         
         if use_cpu:
             print(f"📝 Found CPU flag file. CPU will be used when querying this index.")
         
-        # Verify the index exists but don't load it
         if os.path.exists(index_path):
             logger.info(f"Verified customer index at {index_path}")
             print(f"✅ Successfully verified index at {index_path}")
@@ -274,14 +199,6 @@ def load_customer_index(folder_name: str) -> Optional[str]:
         return None
 
 def select_customer_folder() -> Optional[Dict[str, any]]:
-    """
-    Interactive selection of customer folder.
-    
-    Returns
-    -------
-    Optional[Dict[str, any]]
-        Selected folder information or None if no selection
-    """
     folders = scan_rfp_folders()
     
     if not folders:
@@ -308,16 +225,14 @@ def select_customer_folder() -> Optional[Dict[str, any]]:
             
             if idx == 0:
                 print("\n🔍 Using product knowledge only (no customer context)")
-                return None  # No customer context
+                return None
             
             if 1 <= idx <= len(folders):
                 selected = folders[idx - 1]
                 
-                # Check if indexing is needed
                 if not selected["has_index"] and selected["total_docs"] > 0:
                     response = input(f"\nFolder '{selected['name']}' needs indexing. Create index now? (y/n): ")
                     if response.lower() == 'y':
-                        # Ask about CPU usage if CUDA is available
                         use_cpu = False
                         if torch.cuda.is_available():
                             cpu_response = input("Use CPU instead of GPU for indexing? This is slower but uses less memory. (y/n): ")

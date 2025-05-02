@@ -1,15 +1,6 @@
 from config import MAX_WORDS_BEFORE_SUMMARY
 from langchain.prompts import PromptTemplate
 
-"""
-Prompt templates for language model interactions.
-
-This module contains various prompt templates used for:
-- Summarizing long text
-- Generating initial answers to questions
-- Refining answers with additional context
-"""
-
 SUMMARY_PROMPT = PromptTemplate.from_template(
     template="""
 You are an experienced technical writer specialized in summarizing technical documentation.

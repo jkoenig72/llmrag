@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 class GoogleSheetHandler:
     def __init__(self, sheet_id: str, credentials_file: str):
-        """Initialize the GoogleSheetHandler with sheet ID and credentials."""
         self.client = gspread.service_account(filename=credentials_file)
         self.sheet = self.client.open_by_key(sheet_id).sheet1
         self.sheet_id = sheet_id
@@ -24,7 +23,6 @@ class GoogleSheetHandler:
         reraise=True
     )
     def load_data(self) -> Tuple[List[str], Dict[str, List[int]], List[List[str]], gspread.Worksheet]:
-        """Load data from the Google Sheet including headers, roles, and content rows."""
         try:
             sheet = self.sheet
             all_values = sheet.get_all_values()
@@ -64,26 +62,20 @@ class GoogleSheetHandler:
         reraise=True
     )
     def update_batch(self, updates: List[Dict[str, Any]]):
-        """
-        Update cells in the Google Sheet - simple version.
-        """
         try:
             if not updates:
                 return
 
-            # Process updates one by one for simplicity and reliability
             for update in updates:
                 row, col, value = update["row"], update["col"], update["value"]
                 cell = gspread.utils.rowcol_to_a1(row, col)
                 
                 try:
-                    # Update each cell directly, no special handling needed
                     self.sheet.update(cell, [[value]])
                     logger.info(f"Updated cell {cell}")
                 except Exception as e:
                     logger.error(f"Failed to update cell {cell}: {e}")
             
-            # Add delay after updates to avoid quota issues
             time.sleep(API_THROTTLE_DELAY)
                 
         except APIError as e:
@@ -95,7 +87,6 @@ class GoogleSheetHandler:
             raise
 
     def update_cleaned_records(self, records, roles, question_role, context_role, throttle_delay):
-        """Update the sheet with cleaned record data for specific roles."""
         for record in records:
             updates = []
             row_num = record["sheet_row"]
@@ -110,7 +101,6 @@ class GoogleSheetHandler:
                     if cleaned is None:
                         continue
 
-                    # Fetch original from the sheet
                     cell_range = gspread.utils.rowcol_to_a1(row_num, col_idx)
                     
                     @retry(
@@ -135,9 +125,6 @@ class GoogleSheetHandler:
                 time.sleep(throttle_delay)
 
 def parse_records(headers, roles, rows):
-    """
-    Parse sheet rows into structured record dictionaries.
-    """
     records = []
     for idx, row in enumerate(rows):
         row_data = {"sheet_row": idx + 3, "roles": {}}
@@ -154,9 +141,6 @@ def parse_records(headers, roles, rows):
     return records
 
 def find_output_columns(roles, answer_role, compliance_role, references_role=None):
-    """
-    Find the column indices for answer, compliance, and references roles.
-    """
     columns = {}
     if answer_role in roles:
         columns[answer_role] = roles[answer_role][0]
