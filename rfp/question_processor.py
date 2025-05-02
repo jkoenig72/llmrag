@@ -8,7 +8,8 @@ from config import (
     QUESTION_ROLE, CONTEXT_ROLE, ANSWER_ROLE, COMPLIANCE_ROLE, 
     REFERENCES_ROLE, BATCH_SIZE, API_THROTTLE_DELAY, 
     PRIMARY_PRODUCT_ROLE, LLM_PROVIDER,
-    RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
+    RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS,
+    INDEX_DIR, EMBEDDING_MODEL  # Added imports
 )
 from prompts import QUESTION_PROMPT, REFINE_PROMPT
 from llm_utils import (
@@ -16,6 +17,7 @@ from llm_utils import (
     clean_json_answer, StrictJSONOutputParser
 )
 from text_processing import clean_text
+from embedding_manager import EmbeddingManager  # Import the new EmbeddingManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,30 +50,56 @@ def truncate_context(context, max_chars=12000):
     return context[:max_chars]
 
 def process_questions(records, qa_chain, output_columns, sheet_handler, selected_products=None, 
-                     available_products=None, llm=None, customer_retriever=None, question_logger=None):
+                     available_products=None, llm=None, customer_index_path=None, question_logger=None):
     """
     Process each question record using the QA chain with an optimized refine strategy.
+    Uses the EmbeddingManager to load/unload embedding models between queries.
     
-    This implementation combines corresponding product and customer documents in each step,
-    reducing the number of LLM calls and improving context integration.
+    Parameters
+    ----------
+    records : List[Dict]
+        List of record dictionaries
+    qa_chain : Any
+        LangChain QA chain for text generation
+    output_columns : Dict
+        Column mapping for output fields
+    sheet_handler : GoogleSheetHandler
+        Handler for Google Sheets operations
+    selected_products : List[str], optional
+        List of selected products to focus on
+    available_products : List[str], optional
+        List of all available products
+    llm : Any
+        Language model for text generation
+    customer_index_path : str, optional
+        Path to customer-specific FAISS index
+    question_logger : QuestionLogger, optional
+        Logger for detailed question processing
     """
     batch_updates = []
+    
+    # Initialize EmbeddingManager
+    embedding_manager = EmbeddingManager(EMBEDDING_MODEL)
     
     # IMPROVED: Enhanced QA chain debugging
     print("\n" + "="*50)
     print("DEBUGGING QA CHAIN")
     print("Chain type:", getattr(qa_chain, "chain_type", "unknown"))
     print("Chain attributes:", [attr for attr in dir(qa_chain) if not attr.startswith('_')])
-    if hasattr(qa_chain, "retriever"):
-        print("Retriever:", type(qa_chain.retriever).__name__)
-        print("Retriever k:", getattr(qa_chain.retriever.search_kwargs, "get", lambda x: "unknown")("k", "unknown"))
     
-    # Debug customer retriever if available
-    if customer_retriever:
-        print("Customer Retriever:", type(customer_retriever).__name__)
-        print("Customer Retriever k:", getattr(customer_retriever.search_kwargs, "get", lambda x: "unknown")("k", "unknown"))
+    # Safely check if retriever has search_kwargs attribute
+    print("Retriever:", type(qa_chain.retriever).__name__)
+    if hasattr(qa_chain.retriever, "search_kwargs"):
+        print("Retriever k:", getattr(qa_chain.retriever.search_kwargs, "get", lambda x: "unknown")("k", "unknown"))
     else:
-        print("Customer Retriever: None")
+        print("Retriever: Custom retriever (no search_kwargs attribute)")
+    
+    # Debug embedding management
+    print("\nEMBEDDING MANAGEMENT:")
+    print(f"Using dynamic load/unload pattern for embedding models")
+    print(f"Product index path: {INDEX_DIR}")
+    print(f"Customer index path: {customer_index_path if customer_index_path else 'None'}")
+    print(f"Embedding model: {EMBEDDING_MODEL}")
     print("="*50 + "\n")
     
     # Get current product focus string for logging
@@ -113,49 +141,89 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             # Create enriched question
             enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
             
-            print(f"\n[CHAIN] Processing row {row_num}")
+            # Fetch all product documents at once, then unload model
+            print(f"\n[CHAIN] ======== Processing Question for Row {row_num} ========")
             print(f"[CHAIN] Question: {question[:100]}...")
             print(f"[CHAIN] Product focus: {product_focus_str}")
             
-            # Fetch documents from both sources
-            print(f"[CHAIN] Retrieving product documents...")
-            product_docs = qa_chain.retriever.get_relevant_documents(enriched_question)
-            print(f"[CHAIN] Retrieved {len(product_docs)} product documents")
+            # 1. Load Products DB
+            print(f"[CHAIN] Starting product context retrieval...")
             
-            # Log product document sources
-            for idx, doc in enumerate(product_docs[:3]):
-                # Use product or tag field if source isn't available
-                source = doc.metadata.get('source', 
-                                        doc.metadata.get('product', 
-                                                       doc.metadata.get('tag', 'unknown')))
-                print(f"[CHAIN] Product Document {idx+1}: {source}")
-                
-                # Also log the document metadata for debugging
-                metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() if k in ['product', 'tag', 'source']])
-                if metadata_str:
-                    print(f"[CHAIN] Metadata: {metadata_str}")
-                
-                print(f"[CHAIN] Preview: {doc.page_content[:100]}...")
+            # 2. Query Products DB to get all documents at once
+            product_docs = embedding_manager.query_index(
+                index_path=INDEX_DIR,
+                query=enriched_question,
+                k=RETRIEVER_K_DOCUMENTS,
+                use_cpu=False,  # Can be made configurable if needed
+                db_name="Products DB"
+            )
             
-            # Optional: Fetch customer documents if customer retriever is available
+            # 3. Unload Products DB is handled within query_index
+            print(f"[CHAIN] Product context retrieval complete - got {len(product_docs)} documents")
+            
+            # Log product document sources 
+            if product_docs:
+                print(f"\n[CHAIN] Product Document Sources:")
+                for idx, doc in enumerate(product_docs[:3]):
+                    # Use product or tag field if source isn't available
+                    source = doc.metadata.get('source', 
+                                            doc.metadata.get('product', 
+                                                           doc.metadata.get('tag', 'unknown')))
+                    print(f"[CHAIN]   #{idx+1}: {source}")
+                    
+                    # Also log the document metadata for debugging
+                    metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() if k in ['product', 'tag', 'source']])
+                    if metadata_str:
+                        print(f"[CHAIN]      Metadata: {metadata_str}")
+                    
+                    print(f"[CHAIN]      Preview: {doc.page_content[:100]}...")
+                
+                if len(product_docs) > 3:
+                    print(f"[CHAIN]   ... and {len(product_docs) - 3} more documents")
+            else:
+                print(f"[CHAIN] ⚠️ Warning: No product documents retrieved")
+            
+            # Optional: Fetch all customer documents at once, then unload model
             customer_docs = []
             has_customer_docs = False
-            if customer_retriever:
-                print(f"[CHAIN] Retrieving customer documents...")
+            if customer_index_path:
+                # 4. Load Customer DB
+                print(f"\n[CHAIN] Starting customer context retrieval...")
+                
                 try:
-                    customer_docs = customer_retriever.get_relevant_documents(enriched_question)
+                    # 5. Query Customer DB to get all documents at once
+                    customer_docs = embedding_manager.query_index(
+                        index_path=customer_index_path,
+                        query=enriched_question,
+                        k=CUSTOMER_RETRIEVER_K_DOCUMENTS,
+                        use_cpu=False,  # Can be made configurable
+                        db_name="Customer DB"
+                    )
+                    
+                    # 6. Unload Customer DB is handled within query_index
                     has_customer_docs = len(customer_docs) > 0
-                    print(f"[CHAIN] Retrieved {len(customer_docs)} customer documents")
+                    print(f"[CHAIN] Customer context retrieval complete - got {len(customer_docs)} documents")
                     
                     # Log customer document sources
-                    for idx, doc in enumerate(customer_docs[:3]):
-                        source = f"Customer: {doc.metadata.get('source', 'unknown')}"
-                        print(f"[CHAIN] Customer Document {idx+1}: {source}")
-                        print(f"[CHAIN] Preview: {doc.page_content[:100]}...")
+                    if customer_docs:
+                        print(f"\n[CHAIN] Customer Document Sources:")
+                        for idx, doc in enumerate(customer_docs[:3]):
+                            source = f"Customer: {doc.metadata.get('source', 'unknown')}"
+                            print(f"[CHAIN]   #{idx+1}: {source}")
+                            print(f"[CHAIN]      Preview: {doc.page_content[:100]}...")
+                        
+                        if len(customer_docs) > 3:
+                            print(f"[CHAIN]   ... and {len(customer_docs) - 3} more documents")
+                    else:
+                        print(f"[CHAIN] ⚠️ Warning: No customer documents retrieved")
                 except Exception as e:
                     logger.error(f"Error retrieving customer documents: {e}")
-                    print(f"[CHAIN] Error retrieving customer documents: {e}")
+                    print(f"[CHAIN] ❌ Error retrieving customer documents: {e}")
                     customer_docs = []
+            else:
+                print(f"[CHAIN] ℹ️ No customer context selected - using product knowledge only")
+            
+            print(f"\n[CHAIN] ======== Context Retrieval Complete ========")
             
             # Record start time for performance measurement
             start_time = time.time()
@@ -163,21 +231,31 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             # Performance improvement: Handle initial context separately
             # Create the initial context by combining first product document and first customer document
             initial_context = ""
+            
+            print(f"\n[CHAIN] ======== Starting LLM Chain Processing ========")
+            print(f"[CHAIN] Building initial context...")
+            
             if product_docs:
                 initial_context += "\n\n--- PRODUCT CONTEXT ---\n\n"
                 initial_context += product_docs[0].page_content
+                product_doc_source = product_docs[0].metadata.get('source', 'unknown')
+                print(f"[CHAIN] Added product document #1 from: {product_doc_source}")
             
             if has_customer_docs and len(customer_docs) > 0:
                 initial_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
                 customer_content = customer_docs[0].page_content
                 initial_context += customer_content
-                print(f"[CHAIN] Including customer context in initial prompt (length: {len(customer_content)} chars)")
-            elif customer_retriever is not None:
-                print(f"[CHAIN] Customer retriever available but no documents were retrieved")
+                customer_doc_source = customer_docs[0].metadata.get('source', 'unknown')
+                print(f"[CHAIN] Added customer document #1 from: {customer_doc_source}")
+                print(f"[CHAIN] Combined initial context length: {len(initial_context)} chars")
+            elif customer_index_path is not None:
+                print(f"[CHAIN] No customer documents were retrieved - using product context only")
             
             # IMPORTANT: Truncate context if it's too large to avoid LLM issues
+            original_length = len(initial_context)
             initial_context = truncate_context(initial_context)
-            print(f"[CHAIN] Total initial context length: {len(initial_context)} chars")
+            if len(initial_context) < original_length:
+                print(f"[CHAIN] ⚠️ Initial context truncated from {original_length} to {len(initial_context)} chars")
             
             # Use the QUESTION_PROMPT from prompts.py with our context
             product_focus = ", ".join(products_to_focus) if products_to_focus else None
@@ -192,11 +270,13 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 initial_prompt_vars["product_focus"] = product_focus
             
             # Add a timeout for the LLM call
-            print(f"[CHAIN] Starting initial LLM request (with timeout)...")
+            print(f"[CHAIN] Generating initial answer with LLM...")
+            
+            # Log what documents are being used
             if has_customer_docs and len(customer_docs) > 0:
-                log_msg = "[CHAIN] Generating initial answer with Product Document 1 & Customer Document 1"
+                log_msg = "[CHAIN] Initial step using Product Document #1 & Customer Document #1"
             else:
-                log_msg = "[CHAIN] Generating initial answer with Product Document 1"
+                log_msg = "[CHAIN] Initial step using Product Document #1 only"
             print(log_msg)
             
             # Timeouts aren't directly supported by all LLM implementations, so wrap in our own timeout
@@ -206,18 +286,22 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 future = executor.submit(lambda: QUESTION_PROMPT.format(**initial_prompt_vars))
                 try:
                     # Get the formatted prompt with a timeout
+                    print(f"[CHAIN] Formatting initial prompt...")
                     formatted_prompt = future.result(timeout=10)  # 10 second timeout for formatting
                     
                     # Submit the actual LLM request
+                    print(f"[CHAIN] Sending request to LLM (timeout: 60s)...")
+                    llm_start_time = time.time()
                     future = executor.submit(lambda: llm.invoke(formatted_prompt))
                     initial_response = future.result(timeout=60)  # 60 second timeout for LLM
+                    llm_time = time.time() - llm_start_time
                     
                     if hasattr(initial_response, "content"):
                         current_answer = initial_response.content
                     else:
                         current_answer = str(initial_response)
                     
-                    print(f"[CHAIN] Initial answer generated ({len(current_answer)} chars)")
+                    print(f"[CHAIN] ✅ Initial answer generated in {llm_time:.2f}s ({len(current_answer)} chars)")
                     
                 except concurrent.futures.TimeoutError:
                     print("[CHAIN] ⚠️ LLM request timed out! Falling back to product-only context...")
@@ -230,27 +314,42 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     
                     initial_prompt_vars["context_str"] = initial_context
                     formatted_prompt = QUESTION_PROMPT.format(**initial_prompt_vars)
+                    
+                    print(f"[CHAIN] Retrying with product-only context...")
+                    llm_start_time = time.time()
                     initial_response = llm.invoke(formatted_prompt)
+                    llm_time = time.time() - llm_start_time
                     
                     if hasattr(initial_response, "content"):
                         current_answer = initial_response.content
                     else:
                         current_answer = str(initial_response)
                     
-                    print(f"[CHAIN] Initial answer generated with product-only context ({len(current_answer)} chars)")
+                    print(f"[CHAIN] ✅ Initial answer generated with fallback in {llm_time:.2f}s ({len(current_answer)} chars)")
             
             # Parse the initial answer
             try:
+                print(f"[CHAIN] Parsing initial answer...")
                 current_parsed = json.loads(current_answer)
+                print(f"[CHAIN] ✅ Successfully parsed initial answer as JSON")
             except json.JSONDecodeError:
                 # If parsing fails, try to extract JSON using fallback
+                print(f"[CHAIN] ⚠️ Failed to parse as JSON, trying fallback extraction...")
                 current_parsed = extract_json_from_llm_response(current_answer)
                 if not current_parsed:
+                    print(f"[CHAIN] ⚠️ Fallback extraction failed, creating default answer structure")
                     current_parsed = {
                         "answer": current_answer,
                         "compliance": "PC",
                         "references": []
                     }
+                else:
+                    print(f"[CHAIN] ✅ Fallback extraction succeeded")
+            
+            # Initial answer info
+            print(f"[CHAIN] Initial answer compliance: {current_parsed.get('compliance', 'Unknown')}")
+            answer_preview = current_parsed.get('answer', '')[:100] + "..." if len(current_parsed.get('answer', '')) > 100 else current_parsed.get('answer', '')
+            print(f"[CHAIN] Initial answer preview: {answer_preview}")
             
             # FIXED: Better handling of document pairs for refinement
             paired_docs = []
@@ -268,6 +367,11 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             # Check if we have both types of documents for pairing
             has_both_doc_types = len(remaining_product_docs) > 0 and len(remaining_customer_docs) > 0
+            
+            print(f"\n[CHAIN] Planning refinement steps...")
+            print(f"[CHAIN] Remaining product documents: {len(remaining_product_docs)}")
+            print(f"[CHAIN] Remaining customer documents: {len(remaining_customer_docs)}")
+            print(f"[CHAIN] Maximum refinement steps: {max_refinement_steps}")
             
             # Create paired documents by index, handling cases where one source has fewer documents
             for i in range(max(len(remaining_product_docs), len(remaining_customer_docs))):
@@ -290,6 +394,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     customer_source = remaining_customer_docs[i].metadata.get('source', 'unknown')
                 
                 # IMPORTANT: Truncate context if it's too large
+                original_length = len(refinement_context)
                 refinement_context = truncate_context(refinement_context)
                 
                 # Only add this paired context if it's not empty
@@ -301,35 +406,51 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                         "has_customer": has_customer_doc,
                         "product_source": product_source if has_product_doc else None,
                         "customer_source": customer_source if has_customer_doc else None,
-                        "document_number": i + 2  # +2 because we're starting with docs[1] (doc[0] was in initial step)
+                        "document_number": i + 2,  # +2 because we're starting with docs[1] (doc[0] was in initial step)
+                        "truncated": original_length > len(refinement_context)
                     }
                     paired_docs.append(doc_info)
+            
+            print(f"[CHAIN] Created {len(paired_docs)} refinement steps")
             
             # Keep track of refine steps (initial step already done)
             refine_steps = 1
             
             # Process each paired refinement context
-            for doc_info in paired_docs:
+            for doc_idx, doc_info in enumerate(paired_docs):
                 refine_steps += 1
                 context = doc_info["context"]
                 doc_number = doc_info["document_number"]
                 
+                print(f"\n[CHAIN] ======== Refinement Step {refine_steps} ========")
+                
                 # Improved logging to clearly show what documents are being used
                 if has_both_doc_types:
                     if doc_info["has_product"] and doc_info["has_customer"]:
-                        print(f"[CHAIN] Refinement step {refine_steps} using paired documents (Product Document {doc_number} & Customer Document {doc_number})")
+                        print(f"[CHAIN] Using paired documents: Product #{doc_number} & Customer #{doc_number}")
                     elif doc_info["has_product"]:
-                        print(f"[CHAIN] Refinement step {refine_steps} using Product Document {doc_number} only (no matching Customer Document available)")
+                        print(f"[CHAIN] Using Product Document #{doc_number} only (no matching Customer Document)")
                     elif doc_info["has_customer"]:
-                        print(f"[CHAIN] Refinement step {refine_steps} using Customer Document {doc_number} only (no matching Product Document available)")
+                        print(f"[CHAIN] Using Customer Document #{doc_number} only (no matching Product Document)")
                 else:
                     if doc_info["has_product"]:
-                        if customer_retriever is None:
-                            print(f"[CHAIN] Refinement step {refine_steps} using Product Document {doc_number} (Customer Documentation not enabled)")
+                        if customer_index_path is None:
+                            print(f"[CHAIN] Using Product Document #{doc_number} (Customer Documentation not enabled)")
                         else:
-                            print(f"[CHAIN] Refinement step {refine_steps} using Product Document {doc_number} (No customer documents retrieved)")
+                            print(f"[CHAIN] Using Product Document #{doc_number} (No customer documents retrieved)")
                     elif doc_info["has_customer"]:
-                        print(f"[CHAIN] Refinement step {refine_steps} using Customer Document {doc_number} (no Product Documents remaining)")
+                        print(f"[CHAIN] Using Customer Document #{doc_number} (no Product Documents remaining)")
+                
+                # Source information
+                if doc_info["has_product"]:
+                    print(f"[CHAIN] Product source: {doc_info['product_source']}")
+                if doc_info["has_customer"]:
+                    print(f"[CHAIN] Customer source: {doc_info['customer_source']}")
+                
+                # Context size information
+                print(f"[CHAIN] Context size: {len(context)} chars")
+                if doc_info["truncated"]:
+                    print(f"[CHAIN] ⚠️ Context was truncated to fit size limits")
                 
                 # Use the REFINE_PROMPT from prompts.py with our context
                 refine_prompt_vars = {
@@ -342,31 +463,48 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     refine_prompt_vars["product_focus"] = product_focus
                 
                 # Format the refine prompt using the template from prompts.py
+                print(f"[CHAIN] Formatting refinement prompt...")
                 formatted_refine_prompt = REFINE_PROMPT.format(**refine_prompt_vars)
                 
                 # Use timeout for refinement steps too
+                print(f"[CHAIN] Sending refinement to LLM (timeout: 60s)...")
                 with concurrent.futures.ThreadPoolExecutor() as executor:
+                    llm_start_time = time.time()
                     future = executor.submit(lambda: llm.invoke(formatted_refine_prompt))
                     try:
                         refine_response = future.result(timeout=60)  # 60 second timeout
+                        llm_time = time.time() - llm_start_time
                         
                         if hasattr(refine_response, "content"):
                             refined_answer = refine_response.content
                         else:
                             refined_answer = str(refine_response)
                         
-                        print(f"[CHAIN] Refined answer generated ({len(refined_answer)} chars)")
+                        print(f"[CHAIN] ✅ Refinement generated in {llm_time:.2f}s ({len(refined_answer)} chars)")
                         
                         # Parse the refined answer
                         try:
+                            print(f"[CHAIN] Parsing refined answer...")
                             refined_parsed = json.loads(refined_answer)
+                            print(f"[CHAIN] ✅ Successfully parsed refined answer as JSON")
+                            
+                            # Compare with previous answer
+                            prev_compliance = current_parsed.get('compliance', 'Unknown')
+                            new_compliance = refined_parsed.get('compliance', 'Unknown')
+                            if prev_compliance != new_compliance:
+                                print(f"[CHAIN] 📊 Compliance changed: {prev_compliance} -> {new_compliance}")
+                            
                             # Update current parsed answer for next iteration
                             current_parsed = refined_parsed
                         except json.JSONDecodeError:
                             # If parsing fails, try to extract JSON using fallback
+                            print(f"[CHAIN] ⚠️ Failed to parse as JSON, trying fallback extraction...")
                             refined_parsed = extract_json_from_llm_response(refined_answer)
                             if refined_parsed:
+                                print(f"[CHAIN] ✅ Fallback extraction succeeded")
                                 current_parsed = refined_parsed
+                            else:
+                                print(f"[CHAIN] ⚠️ Fallback extraction failed, keeping previous answer")
                             # If extraction fails, keep current parsed answer
                                 
                     except concurrent.futures.TimeoutError:
@@ -375,7 +513,13 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             # Measure total execution time
             chain_time = time.time() - start_time
-            print(f"[CHAIN] Chain execution completed in {chain_time:.2f} seconds with {refine_steps} steps")
+            print(f"\n[CHAIN] ======== Chain Execution Summary ========")
+            print(f"[CHAIN] Total execution time: {chain_time:.2f} seconds")
+            print(f"[CHAIN] Total steps completed: {refine_steps}")
+            print(f"[CHAIN] Final compliance rating: {current_parsed.get('compliance', 'Unknown')}")
+            print(f"[CHAIN] Final answer length: {len(current_parsed.get('answer', ''))}")
+            print(f"[CHAIN] Final references: {len(current_parsed.get('references', []))}")
+            print(f"[CHAIN] ======== End of Chain Processing ========\n")
             
             # Extract the final result - use current_parsed as our final answer
             raw_answer = json.dumps(current_parsed, indent=2)
@@ -498,7 +642,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     "refine_steps": refine_steps,
                     "product_documents": len(product_docs),
                     "customer_documents": len(customer_docs),
-                    "documents_retrieved": len(product_docs) + len(customer_docs),  # Add this line
+                    "documents_retrieved": len(product_docs) + len(customer_docs),
                     "answer": answer,
                     "compliance": compliance,
                     "references": references,

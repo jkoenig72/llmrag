@@ -9,7 +9,7 @@ GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", os.path.expanduse
 
 # Directory Configuration
 BASE_DIR = os.getenv("BASE_DIR", os.path.expanduser("~/RAG"))
-INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("~/FAISSIndexV6"))
+INDEX_DIR = os.getenv("INDEX_DIR", os.path.expanduser("/home/fritz/FAISSIndexV6"))
 RFP_DOCUMENTS_DIR = os.getenv("RFP_DOCUMENTS_DIR", os.path.expanduser("~/RFP_Documents"))
 CUSTOMER_INDEX_DIR = os.getenv("CUSTOMER_INDEX_DIR", os.path.expanduser("~/customer_indices"))
 

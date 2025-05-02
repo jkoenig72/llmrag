@@ -28,6 +28,7 @@ from question_processor import (
 )
 from customer_docs import select_customer_folder, load_customer_index
 from question_logger import QuestionLogger
+from embedding_manager import EmbeddingManager
 
 # Configure logging
 logging.basicConfig(
@@ -99,16 +100,167 @@ def main():
             logger.error("No output columns found. Exiting.")
             return
 
-        # Load main FAISS index
-        faiss_index = load_faiss_index(INDEX_DIR, EMBEDDING_MODEL, SKIP_INDEXING)
-        retriever = faiss_index.as_retriever(search_kwargs={"k": RETRIEVER_K_DOCUMENTS})
+        # No longer load FAISS index here - we'll do it on-demand using EmbeddingManager
+        logger.info(f"Using dynamic embedding model management for FAISS index: {INDEX_DIR}")
+        print(f"\n{'='*30} EMBEDDING MODEL CONFIGURATION {'='*30}")
+        print(f"🔄 Using dynamic load/unload pattern for embedding models")
+        print(f"📊 Product index path: {INDEX_DIR}")
+        print(f"🔢 Embedding model: {EMBEDDING_MODEL}")
         
         # Load products directly from JSON or discover from index
+        # This still requires a temporary loading of the FAISS index
         if os.path.exists('start_links.json'):
             available_products = load_products_from_json()
+            logger.info(f"Loaded {len(available_products)} products from start_links.json")
+            print(f"📋 Loaded {len(available_products)} products from start_links.json")
         else:
-            available_products = discover_products_from_index(faiss_index)
-        
+            # Use the get_index_info function to extract product info directly from the index
+            print(f"🔍 Extracting product information from FAISS index...")
+            
+            try:
+                # Import needed modules for index inspection
+                import faiss
+                import pickle
+                # Note: we don't import os here since it's already imported at the top level
+                
+                # Path to index files
+                index_faiss = os.path.join(INDEX_DIR, "index.faiss")
+                index_pkl = os.path.join(INDEX_DIR, "index.pkl")
+                
+                if not (os.path.exists(index_faiss) and os.path.exists(index_pkl)):
+                    raise FileNotFoundError("FAISS index files not found. Build the index first.")
+                
+                # Load the index metadata
+                with open(index_pkl, 'rb') as f:
+                    metadata = pickle.load(f)
+                
+                # Load the FAISS index to get its properties
+                index = faiss.read_index(index_faiss)
+                
+                # Extract product distribution from metadata
+                products = {}
+                
+                # Debug: print metadata structure to understand its format
+                print(f"DEBUG: Metadata type: {type(metadata)}")
+                if isinstance(metadata, tuple):
+                    print(f"DEBUG: Metadata tuple length: {len(metadata)}")
+                elif isinstance(metadata, dict):
+                    print(f"DEBUG: Metadata dict keys: {list(metadata.keys())}")
+                
+                # Try multiple approaches to extract product information
+                try:
+                    # Approach 1: Direct access to docstore dictionary (newer format)
+                    if hasattr(metadata, 'get') and metadata.get('docstore'):
+                        docstore_dict = metadata.get('docstore', {}).get('_dict', {})
+                        for doc_id, doc_metadata in docstore_dict.items():
+                            if hasattr(doc_metadata, 'metadata') and 'product' in doc_metadata.metadata:
+                                product = doc_metadata.metadata.get('product', '')
+                                if product:
+                                    products[product] = products.get(product, 0) + 1
+                            # Also check for 'tag' field which might contain product info
+                            elif hasattr(doc_metadata, 'metadata') and 'tag' in doc_metadata.metadata:
+                                product = doc_metadata.metadata.get('tag', '')
+                                if product:
+                                    products[product] = products.get(product, 0) + 1
+                                    
+                    # Approach 2: Handle tuple format (older or modified format)
+                    elif isinstance(metadata, tuple):
+                        # Try different elements of the tuple
+                        for i, element in enumerate(metadata):
+                            # Look for docstore in dict elements
+                            if isinstance(element, dict) and 'docstore' in element:
+                                docstore = element['docstore']
+                                if hasattr(docstore, '_dict'):
+                                    for doc_id, doc_metadata in docstore._dict.items():
+                                        if hasattr(doc_metadata, 'metadata'):
+                                            # Try product field first
+                                            if 'product' in doc_metadata.metadata:
+                                                product = doc_metadata.metadata.get('product', '')
+                                                if product:
+                                                    products[product] = products.get(product, 0) + 1
+                                            # Then try tag field
+                                            elif 'tag' in doc_metadata.metadata:
+                                                product = doc_metadata.metadata.get('tag', '')
+                                                if product:
+                                                    products[product] = products.get(product, 0) + 1
+                                                    
+                            # Look for direct access to documents
+                            elif hasattr(element, '_dict'):
+                                for doc_id, doc_metadata in element._dict.items():
+                                    if hasattr(doc_metadata, 'metadata'):
+                                        # Try product field first
+                                        if 'product' in doc_metadata.metadata:
+                                            product = doc_metadata.metadata.get('product', '')
+                                            if product:
+                                                products[product] = products.get(product, 0) + 1
+                                        # Then try tag field
+                                        elif 'tag' in doc_metadata.metadata:
+                                            product = doc_metadata.metadata.get('tag', '')
+                                            if product:
+                                                products[product] = products.get(product, 0) + 1
+                                                
+                    # Optional: Print extracted products for debugging
+                    if products:
+                        print(f"DEBUG: Successfully extracted product distribution with {len(products)} products")
+                    else:
+                        print("DEBUG: No products extracted - metadata format may be different than expected")
+                        
+                except Exception as e:
+                    print(f"Warning: Could not extract product distribution: {e}")
+                    # Continue without product distribution
+                
+                # Clean up product names
+                clean_products = {}
+                for product, count in products.items():
+                    # Convert underscores to spaces in product names
+                    clean_name = product.replace('_', ' ')
+                    if clean_name.endswith(' Cloud') or clean_name.endswith(' cloud'):
+                        # Keep as is
+                        pass
+                    elif '_Cloud' in product or '_cloud' in product:
+                        clean_name = product.replace('_Cloud', ' Cloud').replace('_cloud', ' cloud')
+                    
+                    # Add to clean products dictionary
+                    clean_products[clean_name] = clean_products.get(clean_name, 0) + count
+                
+                # Convert to sorted list based on document count (most common first)
+                available_products = [product for product, _ in sorted(clean_products.items(), 
+                                                                     key=lambda x: x[1], 
+                                                                     reverse=True)]
+                
+                # Print product distribution
+                print("\n📊 Product Distribution:")
+                for product, count in sorted(clean_products.items(), key=lambda x: x[1], reverse=True):
+                    print(f"  - {product}: {count:,} vectors")
+                
+                # Free resources
+                del index
+                del metadata
+                import gc
+                gc.collect()
+                
+            except Exception as e:
+                logger.error(f"Error extracting products from index: {e}")
+                print(f"⚠️ Error extracting products: {e}")
+                # Fallback to hardcoded list in case of any errors
+                available_products = ["Sales Cloud", "Service Cloud", "Marketing Cloud", "Platform", 
+                                      "Experience Cloud", "Communications Cloud", "Data Cloud",
+                                      "Agentforce", "MuleSoft"]
+                
+            if not available_products:
+                logger.warning("No products found in index, using fallback list")
+                print("⚠️ No products found in index, using fallback list")
+                available_products = ["Sales Cloud", "Service Cloud", "Marketing Cloud", "Platform", 
+                                      "Experience Cloud", "Communications Cloud", "Data Cloud",
+                                      "Agentforce", "MuleSoft"]
+            
+            logger.info(f"Discovered {len(available_products)} products from FAISS index")
+            print(f"📋 Using {len(available_products)} products from index")
+            print("\nAvailable Products:")
+            for product in available_products:
+                print(f"  - {product}")
+            print("")
+            
         # Validate products from sheet against available products
         if PRIMARY_PRODUCT_ROLE in roles:
             validate_products_in_sheet(records, PRIMARY_PRODUCT_ROLE, available_products)
@@ -119,24 +271,51 @@ def main():
             
         if selected_products:
             logger.info(f"Selected products for focus: {', '.join(selected_products)}")
+            print(f"🎯 Selected products for focus: {', '.join(selected_products)}")
         
         # Select customer folder and index
         customer_folder = select_customer_folder()
-        customer_index = None
-        customer_retriever = None
+        customer_index_path = None
         
         if customer_folder and customer_folder["has_index"]:
-            customer_index = load_customer_index(customer_folder["name"])
-            if customer_index:
-                customer_retriever = customer_index.as_retriever(search_kwargs={"k": CUSTOMER_RETRIEVER_K_DOCUMENTS})
-                logger.info(f"Using customer context: {customer_folder['name']}")
-            else:
-                logger.warning(f"Failed to load customer index for {customer_folder['name']}")
+            customer_index_path = customer_folder["index_path"]
+            logger.info(f"Using customer context: {customer_folder['name']}")
+            logger.info(f"Customer index path: {customer_index_path}")
+            print(f"👥 Using customer context: {customer_folder['name']}")
+            print(f"📁 Customer index path: {customer_index_path}")
+        else:
+            print(f"🔍 Using product knowledge only (no customer context)")
+        
+        print(f"{'='*75}")
+        
+        # Create a dummy retriever for compatibility with the QA chain
+        # The actual retrieval will happen in the question_processor
+        # This is just a placeholder to satisfy the QA chain's initialization
+        from langchain.schema import Document
+        from langchain.schema.retriever import BaseRetriever
+        
+        class DummyRetriever(BaseRetriever):
+            """A dummy retriever that always returns empty results but has required attributes."""
+            
+            def __init__(self):
+                super().__init__()
+                # Add search_kwargs attribute to avoid AttributeError
+                self.search_kwargs = {"k": 0}
+            
+            def get_relevant_documents(self, query, **kwargs):
+                """Always returns empty list."""
+                return []
+                
+            async def aget_relevant_documents(self, query, **kwargs):
+                """Always returns empty list."""
+                return []
+        
+        dummy_retriever = DummyRetriever()
         
         # Use the standard QA chain - we'll pass the product focus during question processing
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
-            retriever=retriever,
+            retriever=dummy_retriever,  # We don't use this - it's just a placeholder
             chain_type="refine",
             input_key="question",
             return_source_documents=True,
@@ -147,14 +326,24 @@ def main():
                 "initial_response_name": "existing_answer",
             }
         )
-
+        
+        # Pass customer index path instead of retriever
         process_questions(records, qa_chain, output_columns, sheet_handler, selected_products, 
-                         available_products, llm, customer_retriever, question_logger)
+                         available_products, llm, customer_index_path, question_logger)
 
         logger.info("RFI/RFP response processing completed successfully.")
+        print(f"\n{'='*30} PROCESSING COMPLETE {'='*30}")
+        print(f"✅ Successfully processed {len(records)} questions")
+        print(f"🔖 Detailed logs saved to: {os.path.join(BASE_DIR, 'rag_processing.log')}")
+        if question_logger:
+            print(f"📊 Question logs saved to: {os.path.join(BASE_DIR, 'question_logs')}")
+        print(f"{'='*75}")
 
     except Exception as e:
         logger.critical(f"Critical error in main execution: {e}")
+        print(f"\n❌ CRITICAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

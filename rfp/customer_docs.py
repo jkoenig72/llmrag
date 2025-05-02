@@ -6,9 +6,8 @@ import torch
 from typing import List, Dict, Optional, Tuple
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from config import RFP_DOCUMENTS_DIR, CUSTOMER_INDEX_DIR, EMBEDDING_MODEL
+from embedding_manager import EmbeddingManager
 
 logger = logging.getLogger(__name__)
 
@@ -135,43 +134,10 @@ def load_customer_documents(folder_path: str) -> Tuple[List, Dict[str, int]]:
     
     return split_docs, stats
 
-def get_embeddings(use_cpu=False):
-    """
-    Get embedding model with option to use CPU instead of GPU.
-    
-    Parameters
-    ----------
-    use_cpu : bool, default False
-        If True, force use of CPU even if GPU is available
-        
-    Returns
-    -------
-    HuggingFaceEmbeddings
-        Configured embedding model
-    """
-    model_kwargs = {"device": "cpu"} if use_cpu else {}
-    
-    if use_cpu:
-        # Force CPU usage at the PyTorch level
-        print("🔢 Using CPU for embeddings (GPU disabled)")
-    else:
-        # Check if CUDA is available
-        if torch.cuda.is_available():
-            print(f"🔢 Using GPU for embeddings: {torch.cuda.get_device_name(0)}")
-        else:
-            print("🔢 Using CPU for embeddings (no GPU available)")
-            # Ensure we're using CPU if CUDA isn't available
-            model_kwargs = {"device": "cpu"}
-    
-    # Create embeddings with explicit device setting
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs=model_kwargs
-    )
-
-def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> Optional[FAISS]:
+def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> Optional[str]:
     """
     Create a FAISS index from customer documents and save it.
+    Uses EmbeddingManager for memory-efficient embedding creation.
     
     Parameters
     ----------
@@ -184,8 +150,8 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
         
     Returns
     -------
-    Optional[FAISS]
-        The created FAISS index or None if creation failed
+    Optional[str]
+        The path to the created index or None if creation failed
     """
     try:
         print("\n" + "="*80)
@@ -209,37 +175,27 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
             print(f"\n❌ No valid documents found in {folder_path}")
             return None
         
-        # Create embeddings
+        # Create embeddings and index using EmbeddingManager
         print(f"\n🔢 Creating embeddings using {EMBEDDING_MODEL}...")
-        embeddings = get_embeddings(use_cpu)
+        embedding_manager = EmbeddingManager(EMBEDDING_MODEL)
         
         # Create FAISS index with progress indication
         print(f"\n🧠 Building FAISS vector index...")
         print(f"Processing {len(documents)} document chunks...")
         
-        # Create batches to show progress
+        # Process in batches just for progress display
         batch_size = max(1, len(documents) // 10)  # Show 10 progress updates
         
-        # Process in batches just for progress display
-        all_docs = []
+        # Just for progress display
         for i in range(0, len(documents), batch_size):
-            batch = documents[i:i+batch_size]
             current_progress = min(i + batch_size, len(documents))
             print(f"Progress: {current_progress}/{len(documents)} chunks ({(current_progress/len(documents))*100:.1f}%)")
-            all_docs.extend(batch)
         
-        # Create index from all documents
-        index = FAISS.from_documents(documents, embeddings)
-        
-        # Create directory if it doesn't exist already
-        os.makedirs(index_path, exist_ok=True)
-        
-        # Save index
-        print(f"\n💾 Saving index to {index_path}...")
-        index.save_local(index_path)
+        # Create index from all documents using the embedding manager
+        result_path = embedding_manager.create_index(documents, index_path, use_cpu=use_cpu, db_name="Customer DB")
         
         # Create flag file if using CPU
-        if flag_file and use_cpu:
+        if flag_file and use_cpu and result_path:
             with open(flag_file, 'w') as f:
                 f.write("This index was created with CPU and should be loaded with CPU.")
             print(f"📝 Created CPU flag file: {flag_file}")
@@ -264,16 +220,17 @@ def create_customer_index(folder_name: str, folder_path: str, use_cpu=False) -> 
         
         logger.info(f"Saved customer index to {index_path}")
         
-        return index
+        return index_path
         
     except Exception as e:
         logger.error(f"Failed to create customer index: {e}")
         print(f"\n❌ Error creating index: {e}")
         return None
 
-def load_customer_index(folder_name: str) -> Optional[FAISS]:
+def load_customer_index(folder_name: str) -> Optional[str]:
     """
-    Load an existing customer FAISS index, automatically choosing CPU if needed.
+    Verify an existing customer FAISS index exists.
+    We don't actually load the index here anymore, just verify it exists.
     
     Parameters
     ----------
@@ -282,8 +239,8 @@ def load_customer_index(folder_name: str) -> Optional[FAISS]:
         
     Returns
     -------
-    Optional[FAISS]
-        The loaded FAISS index or None if loading failed
+    Optional[str]
+        The path to the verified index or None if verification failed
     """
     try:
         index_path = os.path.join(CUSTOMER_INDEX_DIR, f"{folder_name}_index")
@@ -292,51 +249,28 @@ def load_customer_index(folder_name: str) -> Optional[FAISS]:
             logger.error(f"Customer index not found at {index_path}")
             return None
         
-        print(f"\n🔍 Loading customer index for {folder_name}...")
+        print(f"\n🔍 Verifying customer index for {folder_name}...")
         
         # Check if this index was created with CPU
         cpu_flag_file = os.path.join(index_path, "_created_with_cpu")
         use_cpu = os.path.exists(cpu_flag_file)
         
         if use_cpu:
-            print(f"📝 Found CPU flag file. Using CPU for loading this index.")
+            print(f"📝 Found CPU flag file. CPU will be used when querying this index.")
         
-        # Try loading with the appropriate device - always start with CPU for safety
-        # This avoids CUDA errors and is more reliable
-        try:
-            # Force CPU for initial load to prevent CUDA issues
-            embeddings = get_embeddings(use_cpu=True)
-            index = FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True)
-            print(f"✅ Successfully loaded index from {index_path} using CPU")
-            
-            # Try to get index statistics if possible
-            try:
-                vector_count = len(index.index_to_docstore_id)
-                print(f"📊 Index contains {vector_count} document chunks")
-            except:
-                # If we can't get stats, just continue
-                pass
-                
-            logger.info(f"Loaded customer index from {index_path}")
-            
-            # Create CPU flag file if it doesn't exist (for future loads)
-            if not os.path.exists(cpu_flag_file):
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(cpu_flag_file), exist_ok=True)
-                with open(cpu_flag_file, 'w') as f:
-                    f.write("This index should be loaded with CPU for stability.")
-                print(f"📝 Created CPU flag file for future loads: {cpu_flag_file}")
-            
-            return index
-            
-        except Exception as e:
-            logger.error(f"Failed to load customer index: {e}")
-            print(f"❌ Error loading index: {e}")
+        # Verify the index exists but don't load it
+        if os.path.exists(index_path):
+            logger.info(f"Verified customer index at {index_path}")
+            print(f"✅ Successfully verified index at {index_path}")
+            return index_path
+        else:
+            logger.error(f"Failed to verify index at {index_path}")
+            print(f"❌ Error: Index not found at {index_path}")
             return None
                 
     except Exception as e:
-        logger.error(f"Failed to load customer index: {e}")
-        print(f"❌ Error loading index: {e}")
+        logger.error(f"Failed to verify customer index: {e}")
+        print(f"❌ Error verifying index: {e}")
         return None
 
 def select_customer_folder() -> Optional[Dict[str, any]]:
@@ -389,9 +323,10 @@ def select_customer_folder() -> Optional[Dict[str, any]]:
                             cpu_response = input("Use CPU instead of GPU for indexing? This is slower but uses less memory. (y/n): ")
                             use_cpu = cpu_response.lower() == 'y'
                         
-                        index = create_customer_index(selected["name"], selected["path"], use_cpu=use_cpu)
-                        if index:
+                        index_path = create_customer_index(selected["name"], selected["path"], use_cpu=use_cpu)
+                        if index_path:
                             selected["has_index"] = True
+                            selected["index_path"] = index_path
                         else:
                             print("Failed to create index. Continue anyway? (y/n): ")
                             if input().lower() != 'y':
