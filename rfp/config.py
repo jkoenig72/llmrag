@@ -14,6 +14,8 @@ RFP_DOCUMENTS_DIR = os.getenv("RFP_DOCUMENTS_DIR", os.path.expanduser("~/RFP_Doc
 CUSTOMER_INDEX_DIR = os.getenv("CUSTOMER_INDEX_DIR", os.path.expanduser("~/customer_indices"))
 
 # Processing Configuration
+# DEPRECATED: SKIP_INDEXING is deprecated and will be removed in a future version.
+#             The system now uses EmbeddingManager for dynamic embedding loading.
 SKIP_INDEXING = os.getenv("SKIP_INDEXING", "True").lower() == "true"
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
 API_THROTTLE_DELAY = int(os.getenv("API_THROTTLE_DELAY", "3"))  # Increased from 1 to 3 seconds

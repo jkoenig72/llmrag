@@ -2,6 +2,7 @@ import re
 import json
 import logging
 import os
+import warnings
 from typing import Dict, Any, List
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -11,6 +12,9 @@ logger = logging.getLogger(__name__)
 def load_faiss_index(index_dir: str, embedding_model: str, skip_indexing: bool = True):
     """
     Load FAISS vector index from disk.
+    
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+                Use EmbeddingManager.query_index() instead for better memory efficiency.
     
     This function initializes a FAISS vector index using the specified embedding model
     and loads it from the provided directory path.
@@ -38,6 +42,12 @@ def load_faiss_index(index_dir: str, embedding_model: str, skip_indexing: bool =
     Exception
         For other errors during index loading
     """
+    warnings.warn(
+        "load_faiss_index() is deprecated. Use EmbeddingManager.query_index() instead for better memory efficiency.",
+        DeprecationWarning, 
+        stacklevel=2
+    )
+    
     try:
         embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
         if skip_indexing:
@@ -53,9 +63,14 @@ def load_faiss_index(index_dir: str, embedding_model: str, skip_indexing: bool =
         logger.error(f"Error loading FAISS index: {e}")
         raise
 
+# DEPRECATED: This class is maintained for backward compatibility.
+# Use extract_json_from_llm_response() instead which has more robust fallback mechanisms.
 class StrictJSONOutputParser:
     """
     Ensures that LLM responses are properly formatted as JSON.
+    
+    DEPRECATED: This class is maintained for backward compatibility.
+    Use extract_json_from_llm_response() instead which has more robust fallback mechanisms.
     
     Provides methods to format and validate JSON output from LLMs,
     with fallback mechanisms to handle partial or malformed JSON.
@@ -65,6 +80,8 @@ class StrictJSONOutputParser:
     def parse(text: str) -> Dict:
         """
         Parse text that should contain JSON and extract a valid JSON object.
+        
+        DEPRECATED: Use extract_json_from_llm_response() instead which has more robust fallback mechanisms.
         
         Parameters
         ----------
@@ -76,132 +93,14 @@ class StrictJSONOutputParser:
         Dict
             Extracted JSON object or default response
         """
-        # Default response format
-        default_response = {
-            "compliance": "PC",
-            "answer": text.strip(),
-            "references": []
-        }
+        warnings.warn(
+            "StrictJSONOutputParser.parse() is deprecated. Use extract_json_from_llm_response() instead.",
+            DeprecationWarning, 
+            stacklevel=2
+        )
         
-        # Clean the text to handle common issues
-        cleaned_text = StrictJSONOutputParser._clean_text(text)
-        
-        # Try to find and extract JSON
-        try:
-            # Look for JSON block between curly braces
-            json_match = re.search(r'(\{[\s\S]*\})', cleaned_text)
-            if json_match:
-                json_str = json_match.group(1)
-                parsed = json.loads(json_str)
-                
-                # Validate required fields
-                if "compliance" in parsed and "answer" in parsed:
-                    # Ensure references is a list
-                    if "references" not in parsed:
-                        parsed["references"] = []
-                    elif not isinstance(parsed["references"], list):
-                        parsed["references"] = []
-                        
-                    # Ensure compliance is valid
-                    parsed["compliance"] = validate_compliance_value(parsed["compliance"])
-                    
-                    # Clean answer field
-                    parsed["answer"] = clean_json_answer(str(parsed["answer"]))
-                    
-                    return parsed
-        except (json.JSONDecodeError, AttributeError) as e:
-            logger.warning(f"Failed to parse JSON from LLM response: {e}")
-        
-        # If we're here, we couldn't extract valid JSON - try to find key fields
-        try:
-            # Try to extract compliance
-            compliance_match = re.search(r'"compliance":\s*"([^"]+)"', cleaned_text)
-            if compliance_match:
-                default_response["compliance"] = validate_compliance_value(compliance_match.group(1))
-            
-            # Try to extract references
-            references_match = re.search(r'"references":\s*\[(.*?)\]', cleaned_text, re.DOTALL)
-            if references_match:
-                refs_text = references_match.group(1)
-                # Extract URLs from the references text
-                urls = re.findall(r'"(https?://[^"]+)"', refs_text)
-                if urls:
-                    default_response["references"] = urls
-            
-            # Try to extract answer
-            answer_match = re.search(r'"answer":\s*"([^"]+)"', cleaned_text)
-            if answer_match:
-                default_response["answer"] = answer_match.group(1)
-            else:
-                # Try to extract multi-line answer
-                answer_match = re.search(r'"answer":\s*"([\s\S]*?)"[,}]', cleaned_text)
-                if answer_match:
-                    default_response["answer"] = answer_match.group(1)
-        except Exception as e:
-            logger.warning(f"Failed to extract fields from LLM response: {e}")
-        
-        return default_response
-    
-    @staticmethod
-    def _clean_text(text: str) -> str:
-        """
-        Clean text to prepare for JSON extraction.
-        
-        Parameters
-        ----------
-        text : str
-            Raw text from LLM
-            
-        Returns
-        -------
-        str
-            Cleaned text
-        """
-        # Remove markdown code blocks
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
-        
-        # Remove response prefixes like "Response (JSON only):"
-        text = re.sub(r'^.*?Response \(JSON only\):\s*', '', text, flags=re.DOTALL)
-        
-        # Remove any trailing markdown
-        text = re.sub(r'\s*```\s*$', '', text)
-        
-        return text
-
-def discover_products_from_index(faiss_index, num_samples=100):
-    """
-    Discover products mentioned in the FAISS index by sampling documents.
-    Returns a list of unique product names found in the index.
-    """
-    # Define products based on your start_links.json
-    available_products = [
-        "Sales Cloud",
-        "Service Cloud", 
-        "Agentforce",
-        "Platform",
-        "Communications Cloud",
-        "Experience Cloud",
-        "Data Cloud",
-        "Marketing Cloud",
-        "MuleSoft"
-    ]
-    
-    # Sample documents to verify these products exist in the index
-    found_products = set()
-    
-    # Search for each product to confirm it's in the index
-    for product in available_products:
-        try:
-            # Try to find documents mentioning this product
-            results = faiss_index.similarity_search(product, k=1)
-            if results and len(results) > 0:
-                found_products.add(product)
-                logger.debug(f"Found product '{product}' in FAISS index")
-        except Exception as e:
-            logger.warning(f"Could not search for product '{product}': {e}")
-    
-    return sorted(list(found_products))
+        # For backward compatibility, call extract_json_from_llm_response
+        return extract_json_from_llm_response(text)
 
 def load_products_from_json():
     """
@@ -306,6 +205,9 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
     Extract JSON from LLM response with multiple fallback strategies.
     Enhanced to handle various response formats and nested structures.
     
+    This is the primary JSON extraction function with comprehensive fallback
+    strategies for handling malformed or unexpected LLM responses.
+    
     Parameters
     ----------
     response : str
@@ -316,6 +218,7 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
     Dict[str, Any]
         A dictionary containing "answer", "compliance", and "references" keys
     """
+    # Default result structure if parsing fails
     default_result = {
         "answer": response.strip(),
         "compliance": "PC",
@@ -332,7 +235,7 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
             if cleaned.startswith('{') and cleaned.endswith('}'):
                 parsed = json.loads(cleaned)
                 if validate_json_structure(parsed):
-                    return process_parsed_json(parsed)
+                    return _process_parsed_json(parsed)
                 
             # Handle responses with "answers" array structure
             if '"answers"' in cleaned or "'answers'" in cleaned:
@@ -359,7 +262,7 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
                                         "references": []
                                     }
                     # If we can't extract from answers array, use the whole JSON
-                    return process_parsed_json(parsed)
+                    return _process_parsed_json(parsed)
         except json.JSONDecodeError:
             pass
 
@@ -370,7 +273,7 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
             try:
                 parsed = json.loads(match.strip())
                 if validate_json_structure(parsed):
-                    return process_parsed_json(parsed)
+                    return _process_parsed_json(parsed)
             except json.JSONDecodeError:
                 continue
 
@@ -402,7 +305,7 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
             try:
                 parsed = json.loads(match)
                 if validate_json_structure(parsed):
-                    return process_parsed_json(parsed)
+                    return _process_parsed_json(parsed)
             except json.JSONDecodeError:
                 continue
 
@@ -441,9 +344,13 @@ def extract_json_from_llm_response(response: str) -> Dict[str, Any]:
     
     return default_result
 
-def process_parsed_json(parsed: Dict) -> Dict:
+# Helper function for extract_json_from_llm_response
+# Renamed with underscore prefix to indicate it's a private helper function
+def _process_parsed_json(parsed: Dict) -> Dict:
     """
     Process and normalize a parsed JSON structure to ensure it has the required fields.
+    
+    Private helper function for extract_json_from_llm_response().
     
     Parameters
     ----------

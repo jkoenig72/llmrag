@@ -1,13 +1,15 @@
 import logging
 import os
 import time
+import warnings
 from typing import List, Dict, Any, Optional
 from langchain.chains import RetrievalQA
 
 # Import from local modules
 from config import (
     GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE, BASE_DIR, INDEX_DIR, 
-    SKIP_INDEXING, BATCH_SIZE, LLM_PROVIDER, LLM_MODEL, OLLAMA_BASE_URL, 
+    # Removed: SKIP_INDEXING, (not used in this file)
+    BATCH_SIZE, LLM_PROVIDER, LLM_MODEL, OLLAMA_BASE_URL, 
     LLAMA_CPP_BASE_URL, EMBEDDING_MODEL, QUESTION_ROLE, CONTEXT_ROLE, 
     ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY, CLEAN_UP_CELL_CONTENT, 
     SUMMARIZE_LONG_CELLS, PRIMARY_PRODUCT_ROLE, INTERACTIVE_PRODUCT_SELECTION, 
@@ -19,13 +21,12 @@ from prompts import (
 from sheets_handler import GoogleSheetHandler, parse_records, find_output_columns
 from text_processing import clean_text, clean_up_cells, summarize_long_texts
 from llm_utils import (
-    load_faiss_index, discover_products_from_index, load_products_from_json
+    # Removed: discover_products_from_index, (not used anymore)
+    load_products_from_json
 )
 from llm_wrapper import get_llm
 from product_selector import select_products, select_starting_row
-from question_processor import (
-    validate_products_in_sheet, process_questions
-)
+from question_processor import process_questions, validate_products_in_sheet  
 from customer_docs import select_customer_folder, load_customer_index
 from question_logger import QuestionLogger
 from embedding_manager import EmbeddingManager
@@ -294,21 +295,33 @@ def main():
         from langchain.schema import Document
         from langchain.schema.retriever import BaseRetriever
         
+        # Suppress deprecation warnings for BaseRetriever
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain")
+        
+        # Updated DummyRetriever class compliant with latest LangChain patterns
         class DummyRetriever(BaseRetriever):
             """A dummy retriever that always returns empty results but has required attributes."""
             
-            def __init__(self):
-                super().__init__()
-                # Add search_kwargs attribute to avoid AttributeError
-                self.search_kwargs = {"k": 0}
+            # Define as a class variable for Pydantic model
+            search_kwargs: Dict[str, Any] = {"k": 0}
             
-            def get_relevant_documents(self, query, **kwargs):
+            # Implement required abstract methods with underscore prefix
+            def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
                 """Always returns empty list."""
                 return []
-                
-            async def aget_relevant_documents(self, query, **kwargs):
+            
+            async def _aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
                 """Always returns empty list."""
                 return []
+            
+            # Add backward compatibility methods to prevent warnings
+            def get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+                """Backward compatibility method."""
+                return self._get_relevant_documents(query, **kwargs)
+            
+            async def aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+                """Backward compatibility method."""
+                return await self._aget_relevant_documents(query, **kwargs)
         
         dummy_retriever = DummyRetriever()
         
@@ -336,7 +349,7 @@ def main():
         print(f"✅ Successfully processed {len(records)} questions")
         print(f"🔖 Detailed logs saved to: {os.path.join(BASE_DIR, 'rag_processing.log')}")
         if question_logger:
-            print(f"📊 Question logs saved to: {os.path.join(BASE_DIR, 'question_logs')}")
+            print(f"📊 Refinement logs saved to: {os.path.join(BASE_DIR, 'refine_logs')}")
         print(f"{'='*75}")
 
     except Exception as e:

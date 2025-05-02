@@ -9,17 +9,42 @@ from config import (
     REFERENCES_ROLE, BATCH_SIZE, API_THROTTLE_DELAY, 
     PRIMARY_PRODUCT_ROLE, LLM_PROVIDER,
     RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS,
-    INDEX_DIR, EMBEDDING_MODEL  # Added imports
+    INDEX_DIR, EMBEDDING_MODEL
 )
-from prompts import QUESTION_PROMPT, REFINE_PROMPT
+# Updated imports - StrictJSONOutputParser is still imported for backward compatibility
+# but we'll show it's deprecated in code comments:
 from llm_utils import (
     extract_json_from_llm_response, validate_compliance_value,
-    clean_json_answer, StrictJSONOutputParser
+    clean_json_answer, StrictJSONOutputParser  # StrictJSONOutputParser is deprecated but kept for compatibility
 )
 from text_processing import clean_text
-from embedding_manager import EmbeddingManager  # Import the new EmbeddingManager
+from embedding_manager import EmbeddingManager
 
 logger = logging.getLogger(__name__)
+
+def validate_products_in_sheet(records, product_role, available_products):
+    """
+    Validate products in Google Sheet against available products in FAISS index.
+    Warn and prompt for confirmation if products don't match.
+    """
+    invalid_products = []
+    
+    for record in records:
+        row_num = record["sheet_row"]
+        product = clean_text(record["roles"].get(product_role, ""))
+        
+        if product and not any(product.lower() in p.lower() or p.lower() in product.lower() for p in available_products):
+            invalid_products.append((row_num, product))
+    
+    if invalid_products:
+        print("\n⚠️ WARNING: The following products were not found in the FAISS index:")
+        for row_num, product in invalid_products:
+            print(f"  - Row {row_num}: '{product}'")
+        
+        response = input("\nDo you want to continue processing? (y/n): ")
+        if response.lower() != 'y':
+            logger.info("Processing cancelled by user due to invalid products.")
+            exit(0)
 
 def truncate_context(context, max_chars=12000):
     """
@@ -359,11 +384,8 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             remaining_product_docs = product_docs[1:] if product_docs else []
             remaining_customer_docs = customer_docs[1:] if customer_docs else []
             
-            # Limit the number of refinement steps to avoid excessive processing
-            max_refinement_steps = 3  # Adjust as needed
-            
-            remaining_product_docs = remaining_product_docs[:max_refinement_steps]
-            remaining_customer_docs = remaining_customer_docs[:max_refinement_steps]
+            # Use all retrieved documents for refinement (first document already used for initial answer)
+            # No artificial limit on refinement steps - use all documents that were retrieved
             
             # Check if we have both types of documents for pairing
             has_both_doc_types = len(remaining_product_docs) > 0 and len(remaining_customer_docs) > 0
@@ -371,7 +393,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             print(f"\n[CHAIN] Planning refinement steps...")
             print(f"[CHAIN] Remaining product documents: {len(remaining_product_docs)}")
             print(f"[CHAIN] Remaining customer documents: {len(remaining_customer_docs)}")
-            print(f"[CHAIN] Maximum refinement steps: {max_refinement_steps}")
+            print(f"[CHAIN] Has both document types: {has_both_doc_types}")
             
             # Create paired documents by index, handling cases where one source has fewer documents
             for i in range(max(len(remaining_product_docs), len(remaining_customer_docs))):
@@ -659,27 +681,3 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             if question_logger:
                 question_logger.log_error(row_num, question, e)
             time.sleep(API_THROTTLE_DELAY)
-
-def validate_products_in_sheet(records, product_role, available_products):
-    """
-    Validate products in Google Sheet against available products in FAISS index.
-    Warn and prompt for confirmation if products don't match.
-    """
-    invalid_products = []
-    
-    for record in records:
-        row_num = record["sheet_row"]
-        product = clean_text(record["roles"].get(product_role, ""))
-        
-        if product and not any(product.lower() in p.lower() or p.lower() in product.lower() for p in available_products):
-            invalid_products.append((row_num, product))
-    
-    if invalid_products:
-        print("\n⚠️ WARNING: The following products were not found in the FAISS index:")
-        for row_num, product in invalid_products:
-            print(f"  - Row {row_num}: '{product}'")
-        
-        response = input("\nDo you want to continue processing? (y/n): ")
-        if response.lower() != 'y':
-            logger.info("Processing cancelled by user due to invalid products.")
-            exit(0)
