@@ -179,7 +179,8 @@ class QuestionLogger:
             # IMPROVED: Retrieval metrics 
             f.write("RETRIEVAL METRICS\n")
             f.write("-" * 40 + "\n")
-            f.write(f"Documents Retrieved: {log_data.get('documents_retrieved', 'Unknown')}\n")
+            # Update this line to use the new documents_retrieved field
+            f.write(f"Documents Retrieved: {log_data.get('documents_retrieved', 0)}\n")
             f.write(f"Chain Execution Time: {log_data.get('refine_chain_time', 'Unknown'):.2f} seconds\n")
             f.write("\n")
             
