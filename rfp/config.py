@@ -14,9 +14,7 @@ RFP_DOCUMENTS_DIR = os.getenv("RFP_DOCUMENTS_DIR", os.path.expanduser("~/RFP_Doc
 CUSTOMER_INDEX_DIR = os.getenv("CUSTOMER_INDEX_DIR", os.path.expanduser("~/customer_indices"))
 
 # Processing Configuration
-# DEPRECATED: SKIP_INDEXING is deprecated and will be removed in a future version.
-#             The system now uses EmbeddingManager for dynamic embedding loading.
-SKIP_INDEXING = os.getenv("SKIP_INDEXING", "True").lower() == "true"
+# Removed: SKIP_INDEXING (no longer used with EmbeddingManager)
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
 API_THROTTLE_DELAY = int(os.getenv("API_THROTTLE_DELAY", "3"))  # Increased from 1 to 3 seconds
 MAX_WORDS_BEFORE_SUMMARY = int(os.getenv("MAX_WORDS_BEFORE_SUMMARY", "200"))
@@ -47,7 +45,7 @@ REFERENCES_ROLE = os.getenv("REFERENCES_ROLE", "references")
 CLEAN_UP_CELL_CONTENT = os.getenv("CLEAN_UP_CELL_CONTENT", "False").lower() == "true"
 SUMMARIZE_LONG_CELLS = os.getenv("SUMMARIZE_LONG_CELLS", "False").lower() == "true"
 INTERACTIVE_PRODUCT_SELECTION = os.getenv("INTERACTIVE_PRODUCT_SELECTION", "True").lower() == "true"
-AUTO_DISCOVER_PRODUCTS = os.getenv("AUTO_DISCOVER_PRODUCTS", "True").lower() == "true"
+# Removed: AUTO_DISCOVER_PRODUCTS (unused in the codebase)
 
 # Google API Rate Limits
 GOOGLE_API_MAX_RETRIES = int(os.getenv("GOOGLE_API_MAX_RETRIES", "3"))
