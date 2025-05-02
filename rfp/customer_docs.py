@@ -207,7 +207,6 @@ def create_customer_index(folder_name: str, folder_path: str) -> Optional[FAISS]
         print(f"  • Documents processed: {stats['successful_loads']}/{stats['total_files']} ({stats['pdf_files']} PDFs, {stats['docx_files']} DOCXs)")
         print(f"  • Pages processed: {stats['pages_processed']}")
         print(f"  • Total chunks in vector database: {stats['total_chunks']}")
-        print(f"  • Vector dimensions: {embeddings.embedding_size}")
         print(f"  • Embedding model: {EMBEDDING_MODEL}")
         print(f"  • Processing time: {processing_time:.2f} seconds")
         print(f"  • Index saved to: {index_path}")
