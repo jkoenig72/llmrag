@@ -10,10 +10,7 @@ from config import (
     PRIMARY_PRODUCT_ROLE, LLM_PROVIDER,
     RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
 )
-from prompts import (
-    get_question_prompt_with_products, QUESTION_PROMPT_WITH_CUSTOMER_CONTEXT,
-    get_question_prompt_with_products_and_customer, QUESTION_PROMPT, REFINE_PROMPT
-)
+from prompts import QUESTION_PROMPT, REFINE_PROMPT
 from llm_utils import (
     extract_json_from_llm_response, validate_compliance_value,
     clean_json_answer, StrictJSONOutputParser
@@ -25,10 +22,10 @@ logger = logging.getLogger(__name__)
 def process_questions(records, qa_chain, output_columns, sheet_handler, selected_products=None, 
                      available_products=None, llm=None, customer_retriever=None, question_logger=None):
     """
-    Process each question record using the QA chain with proper refine strategy.
+    Process each question record using the QA chain with an optimized refine strategy.
     
-    Note: For optimal results, RETRIEVER_K_DOCUMENTS and CUSTOMER_RETRIEVER_K_DOCUMENTS
-    should have the same value (e.g., both set to 3).
+    This implementation combines corresponding product and customer documents in each step,
+    reducing the number of LLM calls and improving context integration.
     """
     batch_updates = []
     
@@ -85,7 +82,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             print(f"[CHAIN] Question: {question[:100]}...")
             print(f"[CHAIN] Product focus: {product_focus_str}")
             
-            # SIMPLIFIED: Fetch documents from both sources
+            # Fetch documents from both sources
             print(f"[CHAIN] Retrieving product documents...")
             product_docs = qa_chain.retriever.get_relevant_documents(enriched_question)
             print(f"[CHAIN] Retrieved {len(product_docs)} product documents")
@@ -107,9 +104,11 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             # Optional: Fetch customer documents if customer retriever is available
             customer_docs = []
+            has_customer_docs = False
             if customer_retriever:
                 print(f"[CHAIN] Retrieving customer documents...")
                 customer_docs = customer_retriever.get_relevant_documents(enriched_question)
+                has_customer_docs = len(customer_docs) > 0
                 print(f"[CHAIN] Retrieved {len(customer_docs)} customer documents")
                 
                 # Log customer document sources
@@ -118,81 +117,40 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     print(f"[CHAIN] Customer Document {idx+1}: {source}")
                     print(f"[CHAIN] Preview: {doc.page_content[:100]}...")
             
-            # SIMPLIFIED: Prepare documents for refine chain
-            # Start with one product document + one customer document (if available)
-            # Then process remaining documents one by one
-            
             # Record start time for performance measurement
             start_time = time.time()
             
-            # Create the initial prompt with first product document and customer document (if available)
+            # Create the initial context by combining first product document and first customer document
             initial_context = ""
             if product_docs:
+                initial_context += "\n\n--- PRODUCT CONTEXT ---\n\n"
                 initial_context += product_docs[0].page_content
             
-            if customer_docs:
-                # Add separator if we already have product context
-                if initial_context:
-                    initial_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
+            if has_customer_docs:
+                initial_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
                 initial_context += customer_docs[0].page_content
             
-            # Create the appropriate prompt with product focus if specified
-            if products_to_focus:
-                product_str = ", ".join(products_to_focus)
-                prompt_text = f"""
-You are a Senior Solution Engineer at Salesforce, with deep expertise in {product_str}.
-
-CRITICAL INSTRUCTIONS:
-1. Your ENTIRE response must be ONLY a valid JSON object - nothing else
-2. The "answer" field MUST contain NORMAL PLAIN TEXT ONLY - NO JSON STRUCTURES, NO LISTS, NO OBJECTS
-3. NEVER put JSON, code blocks, or structured data inside the "answer" field
-4. The "references" field must be an array of relevant Salesforce URLs from the context
-5. Be OPTIMISTIC about compliance ratings - if it can be achieved with configuration or low-code tools, mark it as FC
-
-Use the following context to answer the question:
-
-{initial_context}
-
-Question:
-{enriched_question}
-
-Format your response as a JSON with the following structure:
-{{
-  "compliance": "FC|PC|NC|NA",
-  "answer": "Write ONLY a clear explanation in 5-10 sentences. NO JSON HERE!",
-  "references": ["URL1", "URL2"]
-}}
-"""
-            else:
-                # Use a simpler prompt without product focus
-                prompt_text = f"""
-You are a Senior Solution Engineer at Salesforce.
-
-CRITICAL INSTRUCTIONS:
-1. Your ENTIRE response must be ONLY a valid JSON object - nothing else
-2. The "answer" field MUST contain NORMAL PLAIN TEXT ONLY - NO JSON STRUCTURES, NO LISTS, NO OBJECTS
-3. NEVER put JSON, code blocks, or structured data inside the "answer" field
-4. The "references" field must be an array of relevant Salesforce URLs from the context
-5. Be OPTIMISTIC about compliance ratings - if it can be achieved with configuration or low-code tools, mark it as FC
-
-Use the following context to answer the question:
-
-{initial_context}
-
-Question:
-{enriched_question}
-
-Format your response as a JSON with the following structure:
-{{
-  "compliance": "FC|PC|NC|NA",
-  "answer": "Write ONLY a clear explanation in 5-10 sentences. NO JSON HERE!",
-  "references": ["URL1", "URL2"]
-}}
-"""
+            # Use the QUESTION_PROMPT from prompts.py with our context
+            product_focus = ", ".join(products_to_focus) if products_to_focus else None
             
-            # Generate initial answer
-            print(f"[CHAIN] Generating initial answer with first document(s)")
-            initial_response = llm.invoke(prompt_text)
+            # Format the initial prompt using the template from prompts.py
+            initial_prompt_vars = {
+                "context_str": initial_context,
+                "question": enriched_question
+            }
+            
+            if product_focus:
+                initial_prompt_vars["product_focus"] = product_focus
+            
+            # Log what we're using for the initial answer
+            if has_customer_docs:
+                print(f"[CHAIN] Generating initial answer with Product Document 1 & Customer Document 1")
+            else:
+                print(f"[CHAIN] Generating initial answer with Product Document 1")
+                
+            # Generate initial answer with the properly formatted template
+            formatted_prompt = QUESTION_PROMPT.format(**initial_prompt_vars)
+            initial_response = llm.invoke(formatted_prompt)
             
             if hasattr(initial_response, "content"):
                 current_answer = initial_response.content
@@ -214,106 +172,86 @@ Format your response as a JSON with the following structure:
                         "references": []
                     }
             
-            # Prepare the remaining documents for refinement
-            remaining_docs = []
+            # FIXED: Better handling of document pairs for refinement
+            paired_docs = []
             
-            # Add remaining product docs (skip the first one which we already used)
-            for doc in product_docs[1:]:
-                remaining_docs.append(("product", doc))
+            # Determine how many refinement steps to perform based on remaining documents
+            # Handle the case when customer documents are not available
+            remaining_product_docs = product_docs[1:] if product_docs else []
+            remaining_customer_docs = customer_docs[1:] if customer_docs else []
             
-            # Add remaining customer docs (skip the first one if it was used)
-            if customer_docs and len(customer_docs) > 1:
-                for doc in customer_docs[1:]:
-                    remaining_docs.append(("customer", doc))
+            # Check if we have both types of documents for pairing
+            has_both_doc_types = len(remaining_product_docs) > 0 and len(remaining_customer_docs) > 0
             
-            # Keep track of refine steps
+            # Create paired documents by index, handling cases where one source has fewer documents
+            for i in range(max(len(remaining_product_docs), len(remaining_customer_docs))):
+                refinement_context = ""
+                has_product_doc = i < len(remaining_product_docs)
+                has_customer_doc = i < len(remaining_customer_docs)
+                
+                # Add product document if available for this index
+                if has_product_doc:
+                    refinement_context += "\n\n--- PRODUCT CONTEXT ---\n\n"
+                    refinement_context += remaining_product_docs[i].page_content
+                    product_source = remaining_product_docs[i].metadata.get('source', 
+                                                                         remaining_product_docs[i].metadata.get('product', 
+                                                                                                             remaining_product_docs[i].metadata.get('tag', 'unknown')))
+                
+                # Add customer document if available for this index
+                if has_customer_doc:
+                    refinement_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
+                    refinement_context += remaining_customer_docs[i].page_content
+                    customer_source = remaining_customer_docs[i].metadata.get('source', 'unknown')
+                
+                # Only add this paired context if it's not empty
+                if refinement_context.strip():
+                    # Track which document types are included in this refinement
+                    doc_info = {
+                        "context": refinement_context,
+                        "has_product": has_product_doc,
+                        "has_customer": has_customer_doc,
+                        "product_source": product_source if has_product_doc else None,
+                        "customer_source": customer_source if has_customer_doc else None,
+                        "document_number": i + 2  # +2 because we're starting with docs[1] (doc[0] was in initial step)
+                    }
+                    paired_docs.append(doc_info)
+            
+            # Keep track of refine steps (initial step already done)
             refine_steps = 1
             
-            # Process each remaining document
-            for doc_type, doc in remaining_docs:
+            # Process each paired refinement context
+            for doc_info in paired_docs:
                 refine_steps += 1
-                print(f"[CHAIN] Refinement step {refine_steps} using {doc_type} document")
+                context = doc_info["context"]
+                doc_number = doc_info["document_number"]
                 
-                # Create refine prompt
-                if products_to_focus:
-                    product_str = ", ".join(products_to_focus)
-                    refine_prompt = f"""
-You are refining an RFI response about Salesforce, particularly regarding {product_str}.
-
-CRITICAL INSTRUCTIONS:
-1. Return ONLY a valid JSON object with the EXACT same structure as the existing answer
-2. The "answer" field must contain ONLY plain text - NO JSON, NO code blocks
-3. Your task is to ENHANCE the existing answer with new information, not replace it entirely 
-
-Carefully analyze the new context and update ONLY if the new information:
-1. Contradicts your previous answer with more accurate information
-2. Provides more specific details about Salesforce capabilities
-3. Changes the compliance level based on new evidence
-4. Adds relevant references not previously included
-
-Compliance levels:
-- FC: Available through standard features, configuration, or low-code tools
-- PC: Requires significant custom development
-- NC: Not possible even with customization
-- NA: Out of scope
-
-Existing JSON Answer:
-{json.dumps(current_parsed, indent=2)}
-
-New Context:
-{doc.page_content}
-
-Question:
-{enriched_question}
-
-Return ONLY this JSON structure (with your refinements):
-{{
-  "compliance": "FC|PC|NC|NA",
-  "answer": "Refined explanation in plain text only (5-10 sentences)",
-  "references": ["URL1", "URL2"]
-}}
-"""
+                # Improved logging to clearly show what documents are being used
+                if has_both_doc_types:
+                    if doc_info["has_product"] and doc_info["has_customer"]:
+                        print(f"[CHAIN] Refinement step {refine_steps} using paired documents (Product Document {doc_number} & Customer Document {doc_number})")
+                    elif doc_info["has_product"]:
+                        print(f"[CHAIN] Refinement step {refine_steps} using Product Document {doc_number} only (no matching Customer Document available)")
+                    elif doc_info["has_customer"]:
+                        print(f"[CHAIN] Refinement step {refine_steps} using Customer Document {doc_number} only (no matching Product Document available)")
                 else:
-                    # Generic refine prompt without product focus
-                    refine_prompt = f"""
-You are refining an RFI response about Salesforce.
-
-CRITICAL INSTRUCTIONS:
-1. Return ONLY a valid JSON object with the EXACT same structure as the existing answer
-2. The "answer" field must contain ONLY plain text - NO JSON, NO code blocks
-3. Your task is to ENHANCE the existing answer with new information, not replace it entirely 
-
-Carefully analyze the new context and update ONLY if the new information:
-1. Contradicts your previous answer with more accurate information
-2. Provides more specific details about Salesforce capabilities
-3. Changes the compliance level based on new evidence
-4. Adds relevant references not previously included
-
-Compliance levels:
-- FC: Available through standard features, configuration, or low-code tools
-- PC: Requires significant custom development
-- NC: Not possible even with customization
-- NA: Out of scope
-
-Existing JSON Answer:
-{json.dumps(current_parsed, indent=2)}
-
-New Context:
-{doc.page_content}
-
-Question:
-{enriched_question}
-
-Return ONLY this JSON structure (with your refinements):
-{{
-  "compliance": "FC|PC|NC|NA",
-  "answer": "Refined explanation in plain text only (5-10 sentences)",
-  "references": ["URL1", "URL2"]
-}}
-"""
+                    if doc_info["has_product"]:
+                        print(f"[CHAIN] Refinement step {refine_steps} using Product Document {doc_number} (Customer Documentation not enabled)")
+                    elif doc_info["has_customer"]:
+                        print(f"[CHAIN] Refinement step {refine_steps} using Customer Document {doc_number} (no Product Documents remaining)")
                 
-                # Get refined answer
-                refine_response = llm.invoke(refine_prompt)
+                # Use the REFINE_PROMPT from prompts.py with our context
+                refine_prompt_vars = {
+                    "question": enriched_question,
+                    "existing_answer": json.dumps(current_parsed, indent=2),
+                    "context_str": context
+                }
+                
+                if product_focus:
+                    refine_prompt_vars["product_focus"] = product_focus
+                
+                # Format the refine prompt using the template from prompts.py
+                formatted_refine_prompt = REFINE_PROMPT.format(**refine_prompt_vars)
+                refine_response = llm.invoke(formatted_refine_prompt)
                 
                 if hasattr(refine_response, "content"):
                     refined_answer = refine_response.content

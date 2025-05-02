@@ -14,9 +14,7 @@ from config import (
     REFERENCES_ROLE, RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
 )
 from prompts import (
-    SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT, 
-    get_question_prompt_with_products, QUESTION_PROMPT_WITH_CUSTOMER_CONTEXT,
-    get_question_prompt_with_products_and_customer
+    SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT
 )
 from sheets_handler import GoogleSheetHandler, parse_records, find_output_columns
 from text_processing import clean_text, clean_up_cells, summarize_long_texts
