@@ -19,6 +19,7 @@ from llm_utils import (
 )
 from text_processing import clean_text
 from embedding_manager import EmbeddingManager
+from prompts import QUESTION_PROMPT, REFINE_PROMPT
 
 logger = logging.getLogger(__name__)
 
