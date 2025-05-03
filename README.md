@@ -146,6 +146,6 @@ The system assigns compliance levels to each answer:
 - For GPU acceleration issues with FAISS, verify that you have installed faiss-gpu correctly and your system has compatible drivers.
 - If experiencing rate limits with Google Sheets API, adjust the API_THROTTLE_DELAY in the configuration.
 
-**License and Contributions**
+## License and Contributions
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
