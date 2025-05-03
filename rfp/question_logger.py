@@ -2,6 +2,7 @@ import os
 import re
 import json
 import logging
+import difflib
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -9,10 +10,16 @@ logger = logging.getLogger(__name__)
 
 class QuestionLogger:
     def __init__(self, base_dir: str):
+        # Set up main log directory
         self.refine_log_dir = os.path.join(base_dir, "refine_logs")
         os.makedirs(self.refine_log_dir, exist_ok=True)
         
+        # Set up detailed chain logs directory 
+        self.chain_log_dir = os.path.join(base_dir, "chain_logs")
+        os.makedirs(self.chain_log_dir, exist_ok=True)
+        
     def _create_filename(self, row_num: int, question: str, directory: str = None) -> str:
+        # Clean question text for filename
         clean_question = re.sub(r'[^\w\s-]', '', question.lower())
         clean_question = re.sub(r'\s+', '_', clean_question)
         clean_question = clean_question[:40]
@@ -23,6 +30,7 @@ class QuestionLogger:
             return os.path.join(self.refine_log_dir, f"{row_num}_{clean_question}.log")
     
     def log_enhanced_processing(self, row_num: int, log_data: Dict[str, Any]):
+        # Create summary log as before
         question = log_data.get("question", "Unknown question")
         filename = self._create_filename(row_num, question, self.refine_log_dir)
         
@@ -65,7 +73,7 @@ class QuestionLogger:
             
             additional_fields = set(log_data.keys()) - {'question', 'product_focus', 'documents_retrieved', 
                                                       'refine_chain_time', 'sources_used', 'compliance', 
-                                                      'answer', 'references'}
+                                                      'answer', 'references', 'chain_log_data'}
             if additional_fields:
                 f.write("ADDITIONAL INFORMATION\n")
                 f.write("-" * 40 + "\n")
@@ -74,6 +82,204 @@ class QuestionLogger:
                     f.write(f"{field}: {value}\n")
         
         logger.info(f"Created enhanced refine log: {os.path.basename(filename)}")
+        
+        # Write detailed chain log if available
+        if 'chain_log_data' in log_data and log_data['chain_log_data']:
+            self.log_refinement_chain(row_num, question, log_data['chain_log_data'])
+    
+    def log_refinement_chain(self, row_num: int, question: str, chain_data: List[Dict[str, Any]]):
+        """
+        Log the complete refinement chain including all LLM requests and responses.
+        
+        Parameters
+        ----------
+        row_num : int
+            Row number in the Google Sheet
+        question : str
+            The original question text
+        chain_data : List[Dict[str, Any]]
+            List of dictionaries containing the data for each step in the chain
+        """
+        # Create the chain log filename
+        chain_filename = self._create_filename(row_num, question, self.chain_log_dir).replace('.log', '_chain.log')
+        
+        with open(chain_filename, 'w', encoding='utf-8') as f:
+            f.write("=" * 100 + "\n")
+            f.write(f"COMPLETE REFINEMENT CHAIN LOG - ROW {row_num}\n")
+            f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 100 + "\n\n")
+            
+            # Question Information
+            f.write(f"QUESTION: {question}\n\n")
+            
+            # Process each step in the chain
+            previous_answer = None
+            
+            for step_idx, step_data in enumerate(chain_data):
+                step_num = step_idx + 1
+                step_type = step_data.get('step_type', 'Unknown')
+                
+                # Step header
+                f.write("=" * 100 + "\n")
+                f.write(f"STEP {step_num}: {step_type} {'(INITIAL)' if step_type == 'PROMPT' and step_num == 1 else ''}\n")
+                f.write("=" * 100 + "\n\n")
+                
+                # Context information
+                if 'context_info' in step_data:
+                    f.write("CONTEXT INFORMATION:\n")
+                    f.write("-" * 80 + "\n")
+                    
+                    context_info = step_data['context_info']
+                    
+                    if 'product_doc' in context_info:
+                        f.write(f"Product Document: {context_info['product_doc']}\n")
+                    
+                    if 'customer_doc' in context_info:
+                        f.write(f"Customer Document: {context_info['customer_doc']}\n")
+                    
+                    if 'context_size' in context_info:
+                        f.write(f"Context Size: {context_info['context_size']} characters\n")
+                    
+                    if 'document_number' in context_info:
+                        f.write(f"Document Number: {context_info['document_number']}\n")
+                        
+                    if 'truncated' in context_info and context_info['truncated']:
+                        f.write(f"Note: Context was truncated to fit size limits\n")
+                    
+                    f.write("\n")
+                
+                # Prompt sent to LLM
+                if 'prompt' in step_data:
+                    f.write("PROMPT SENT TO LLM:\n")
+                    f.write("-" * 80 + "\n")
+                    f.write(step_data['prompt'])
+                    f.write("\n\n")
+                
+                # Raw LLM response
+                if 'raw_response' in step_data:
+                    f.write("RAW LLM RESPONSE:\n")
+                    f.write("-" * 80 + "\n")
+                    f.write(step_data['raw_response'])
+                    f.write("\n\n")
+                
+                # Parsed answer
+                if 'parsed_answer' in step_data:
+                    f.write("PARSED ANSWER:\n")
+                    f.write("-" * 80 + "\n")
+                    parsed = step_data['parsed_answer']
+                    
+                    try:
+                        if isinstance(parsed, str):
+                            try:
+                                parsed_dict = json.loads(parsed)
+                                f.write(json.dumps(parsed_dict, indent=2))
+                            except json.JSONDecodeError:
+                                f.write(parsed)
+                        else:
+                            f.write(json.dumps(parsed, indent=2))
+                    except (json.JSONDecodeError, TypeError):
+                        f.write(str(parsed))
+                    
+                    f.write("\n\n")
+                    
+                    # Calculate and show diff from previous answer
+                    if previous_answer and isinstance(parsed, dict) and 'answer' in parsed:
+                        current_answer = parsed.get('answer', '')
+                        prev_answer_text = previous_answer.get('answer', '')
+                        
+                        if current_answer != prev_answer_text:
+                            f.write("CHANGES FROM PREVIOUS STEP:\n")
+                            f.write("-" * 80 + "\n")
+                            
+                            # Get diff between previous and current answer
+                            diff = difflib.unified_diff(
+                                prev_answer_text.splitlines(),
+                                current_answer.splitlines(),
+                                lineterm='',
+                                n=2  # Context lines
+                            )
+                            
+                            diff_text = '\n'.join(diff)
+                            if diff_text:
+                                f.write(diff_text)
+                            else:
+                                f.write("No textual changes detected, but structure or metadata may have changed.")
+                            
+                            f.write("\n\n")
+                            
+                            # Check for compliance changes
+                            prev_compliance = previous_answer.get('compliance', '')
+                            current_compliance = parsed.get('compliance', '')
+                            
+                            if prev_compliance != current_compliance:
+                                f.write(f"Compliance rating changed: {prev_compliance} → {current_compliance}\n\n")
+                            
+                            # Check for references changes
+                            prev_refs = set(previous_answer.get('references', []))
+                            current_refs = set(parsed.get('references', []))
+                            
+                            new_refs = current_refs - prev_refs
+                            if new_refs:
+                                f.write("New references added:\n")
+                                for ref in new_refs:
+                                    f.write(f"+ {ref}\n")
+                                f.write("\n")
+                            
+                            removed_refs = prev_refs - current_refs
+                            if removed_refs:
+                                f.write("References removed:\n")
+                                for ref in removed_refs:
+                                    f.write(f"- {ref}\n")
+                                f.write("\n")
+                    
+                    # Update previous answer for next comparison
+                    if isinstance(parsed, dict):
+                        previous_answer = parsed
+                
+                # Processing time
+                if 'processing_time' in step_data:
+                    f.write(f"Processing Time: {step_data['processing_time']:.2f} seconds\n\n")
+                
+                # Error information if any
+                if 'error' in step_data:
+                    f.write("ERROR INFORMATION:\n")
+                    f.write("-" * 80 + "\n")
+                    f.write(f"Error: {step_data['error']}\n\n")
+                
+                # Separator between steps
+                f.write("\n" + "-" * 100 + "\n\n")
+            
+            # Final summary
+            f.write("=" * 100 + "\n")
+            f.write("CHAIN EXECUTION SUMMARY\n")
+            f.write("=" * 100 + "\n\n")
+            
+            if chain_data and len(chain_data) > 0 and 'parsed_answer' in chain_data[-1]:
+                final_result = chain_data[-1]['parsed_answer']
+                if isinstance(final_result, str):
+                    try:
+                        final_result = json.loads(final_result)
+                    except json.JSONDecodeError:
+                        pass
+                
+                if isinstance(final_result, dict):
+                    f.write(f"Final Compliance Rating: {final_result.get('compliance', 'Unknown')}\n")
+                    f.write(f"Final Answer: {final_result.get('answer', 'No answer generated')}\n\n")
+                    
+                    if 'references' in final_result and final_result['references']:
+                        f.write("Final References:\n")
+                        for ref in final_result['references']:
+                            f.write(f"• {ref}\n")
+                        f.write("\n")
+                else:
+                    f.write(f"Final Result: {str(final_result)}\n")
+            
+            # Total steps and processing time
+            total_time = sum(step.get('processing_time', 0) for step in chain_data if 'processing_time' in step)
+            f.write(f"Total Steps: {len(chain_data)}\n")
+            f.write(f"Total Processing Time: {total_time:.2f} seconds\n")
+        
+        logger.info(f"Created complete refinement chain log: {os.path.basename(chain_filename)}")
     
     def log_refine_steps(self, row_num: int, question: str, documents: List[Any], 
                        initial_answer: Dict[str, Any], final_answer: Dict[str, Any]):

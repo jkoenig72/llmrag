@@ -1,6 +1,7 @@
 import logging
 import time
 import json
+import copy
 from typing import List, Dict, Any, Optional
 from langchain.schema import HumanMessage, Document
 
@@ -108,6 +109,9 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             products_to_focus = selected_products
 
         try:
+            # Initialize a list to hold chain log data for this question
+            chain_log_data = []
+            
             enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
             
             print(f"\n[CHAIN] ======== Processing Question for Row {row_num} ========")
@@ -222,6 +226,13 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             print(f"[CHAIN] Generating initial answer with LLM...")
             
+            # Log context information
+            initial_context_info = {
+                "product_doc": product_doc_source if product_docs else None,
+                "customer_doc": customer_doc_source if has_customer_docs and len(customer_docs) > 0 else None,
+                "context_size": len(initial_context)
+            }
+            
             if has_customer_docs and len(customer_docs) > 0:
                 log_msg = "[CHAIN] Initial step using Product Document #1 & Customer Document #1"
             else:
@@ -234,6 +245,13 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 try:
                     print(f"[CHAIN] Formatting initial prompt...")
                     formatted_prompt = future.result(timeout=10)
+                    
+                    # Store initial prompt information
+                    initial_prompt_data = {
+                        "step_type": "PROMPT",
+                        "context_info": initial_context_info,
+                        "prompt": formatted_prompt
+                    }
                     
                     print(f"[CHAIN] Sending request to LLM (timeout: 60s)...")
                     llm_start_time = time.time()
@@ -248,6 +266,11 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     
                     print(f"[CHAIN] ✅ Initial answer generated in {llm_time:.2f}s ({len(current_answer)} chars)")
                     
+                    # Add response to prompt data
+                    initial_prompt_data["raw_response"] = current_answer
+                    initial_prompt_data["processing_time"] = llm_time
+                    chain_log_data.append(initial_prompt_data)
+                    
                 except concurrent.futures.TimeoutError:
                     print("[CHAIN] ⚠️ LLM request timed out! Falling back to product-only context...")
                     
@@ -258,6 +281,19 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     
                     initial_prompt_vars["context_str"] = initial_context
                     formatted_prompt = QUESTION_PROMPT.format(**initial_prompt_vars)
+                    
+                    # Create a fallback prompt data entry
+                    fallback_prompt_data = {
+                        "step_type": "PROMPT_FALLBACK",
+                        "context_info": {
+                            "product_doc": product_doc_source if product_docs else None,
+                            "customer_doc": None,
+                            "context_size": len(initial_context)
+                        },
+                        "prompt": formatted_prompt,
+                        "error": "Initial prompt timeout"
+                    }
+                    chain_log_data.append(fallback_prompt_data)
                     
                     print(f"[CHAIN] Retrying with product-only context...")
                     llm_start_time = time.time()
@@ -270,11 +306,19 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                         current_answer = str(initial_response)
                     
                     print(f"[CHAIN] ✅ Initial answer generated with fallback in {llm_time:.2f}s ({len(current_answer)} chars)")
+                    
+                    # Update fallback prompt data
+                    fallback_prompt_data["raw_response"] = current_answer
+                    fallback_prompt_data["processing_time"] = llm_time
             
             try:
                 print(f"[CHAIN] Parsing initial answer...")
                 current_parsed = json.loads(current_answer)
                 print(f"[CHAIN] ✅ Successfully parsed initial answer as JSON")
+                
+                # Add parsed answer to prompt data
+                if chain_log_data:
+                    chain_log_data[-1]["parsed_answer"] = current_parsed
             except json.JSONDecodeError:
                 print(f"[CHAIN] ⚠️ Failed to parse as JSON, trying fallback extraction...")
                 current_parsed = extract_json_from_llm_response(current_answer)
@@ -287,6 +331,10 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     }
                 else:
                     print(f"[CHAIN] ✅ Fallback extraction succeeded")
+                
+                # Update parsed answer in prompt data
+                if chain_log_data:
+                    chain_log_data[-1]["parsed_answer"] = current_parsed
             
             print(f"[CHAIN] Initial answer compliance: {current_parsed.get('compliance', 'Unknown')}")
             answer_preview = current_parsed.get('answer', '')[:100] + "..." if len(current_parsed.get('answer', '')) > 100 else current_parsed.get('answer', '')
@@ -372,6 +420,15 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 if doc_info["truncated"]:
                     print(f"[CHAIN] ⚠️ Context was truncated to fit size limits")
                 
+                # Log context information for this refinement step
+                refine_context_info = {
+                    "product_doc": doc_info["product_source"] if doc_info["has_product"] else None,
+                    "customer_doc": doc_info["customer_source"] if doc_info["has_customer"] else None,
+                    "context_size": len(context),
+                    "document_number": doc_number,
+                    "truncated": doc_info["truncated"]
+                }
+                
                 refine_prompt_vars = {
                     "question": enriched_question,
                     "existing_answer": json.dumps(current_parsed, indent=2),
@@ -383,6 +440,14 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 
                 print(f"[CHAIN] Formatting refinement prompt...")
                 formatted_refine_prompt = REFINE_PROMPT.format(**refine_prompt_vars)
+                
+                # Create refine step data structure
+                refine_step_data = {
+                    "step_type": "REFINE",
+                    "step_number": refine_steps,
+                    "context_info": refine_context_info,
+                    "prompt": formatted_refine_prompt
+                }
                 
                 print(f"[CHAIN] Sending refinement to LLM (timeout: 60s)...")
                 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -399,16 +464,24 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                         
                         print(f"[CHAIN] ✅ Refinement generated in {llm_time:.2f}s ({len(refined_answer)} chars)")
                         
+                        # Add response to refine step data
+                        refine_step_data["raw_response"] = refined_answer
+                        refine_step_data["processing_time"] = llm_time
+                        
                         try:
                             print(f"[CHAIN] Parsing refined answer...")
                             refined_parsed = json.loads(refined_answer)
                             print(f"[CHAIN] ✅ Successfully parsed refined answer as JSON")
+                            
+                            # Add parsed answer to refine step data
+                            refine_step_data["parsed_answer"] = refined_parsed
                             
                             prev_compliance = current_parsed.get('compliance', 'Unknown')
                             new_compliance = refined_parsed.get('compliance', 'Unknown')
                             if prev_compliance != new_compliance:
                                 print(f"[CHAIN] 📊 Compliance changed: {prev_compliance} -> {new_compliance}")
                             
+                            # Update current parsed answer for next iteration
                             current_parsed = refined_parsed
                         except json.JSONDecodeError:
                             print(f"[CHAIN] ⚠️ Failed to parse as JSON, trying fallback extraction...")
@@ -416,11 +489,19 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                             if refined_parsed:
                                 print(f"[CHAIN] ✅ Fallback extraction succeeded")
                                 current_parsed = refined_parsed
+                                refine_step_data["parsed_answer"] = refined_parsed
                             else:
                                 print(f"[CHAIN] ⚠️ Fallback extraction failed, keeping previous answer")
+                                refine_step_data["parsed_answer"] = "Failed to parse"
+                        
+                        # Add this refine step to chain log data
+                        chain_log_data.append(refine_step_data)
                                 
                     except concurrent.futures.TimeoutError:
                         print(f"[CHAIN] ⚠️ Refinement step {refine_steps} timed out! Skipping this document...")
+                        refine_step_data["error"] = "Timeout"
+                        refine_step_data["processing_time"] = 60.0  # Timeout value
+                        chain_log_data.append(refine_step_data)
                         continue
             
             chain_time = time.time() - start_time
@@ -542,7 +623,9 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     "answer": answer,
                     "compliance": compliance,
                     "references": references,
-                    "sources_used": sources
+                    "sources_used": sources,
+                    # Add chain log data
+                    "chain_log_data": chain_log_data
                 }
                 
                 question_logger.log_enhanced_processing(row_num, log_data)

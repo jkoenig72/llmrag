@@ -21,8 +21,8 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/e5-large-v2")
 
-RETRIEVER_K_DOCUMENTS = int(os.getenv("RETRIEVER_K_DOCUMENTS", "6"))
-CUSTOMER_RETRIEVER_K_DOCUMENTS = int(os.getenv("CUSTOMER_RETRIEVER_K_DOCUMENTS", "6"))
+RETRIEVER_K_DOCUMENTS = int(os.getenv("RETRIEVER_K_DOCUMENTS", "8"))
+CUSTOMER_RETRIEVER_K_DOCUMENTS = int(os.getenv("CUSTOMER_RETRIEVER_K_DOCUMENTS", "2"))
 
 QUESTION_ROLE = os.getenv("QUESTION_ROLE", "question")
 CONTEXT_ROLE = os.getenv("CONTEXT_ROLE", "context")
