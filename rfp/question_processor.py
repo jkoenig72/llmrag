@@ -19,8 +19,56 @@ from llm_utils import (
 from text_processing import clean_text
 from embedding_manager import EmbeddingManager
 from prompts import QUESTION_PROMPT, REFINE_PROMPT
+# Import the reference handler
+from reference_handler import process_references, MAX_LINKS_PROVIDED
 
 logger = logging.getLogger(__name__)
+
+def extract_product_metadata(doc):
+    """
+    Extract product information from document metadata with improved fallbacks.
+    
+    Args:
+        doc: Document object with metadata
+        
+    Returns:
+        str: Product or source information, or "unknown" if not found
+    """
+    if not hasattr(doc, 'metadata'):
+        return "unknown (no metadata)"
+    
+    metadata = doc.metadata
+    
+    # Debug all available metadata keys
+    metadata_keys = list(metadata.keys())
+    logger.debug(f"Available metadata keys: {metadata_keys}")
+    
+    # Try standard keys first
+    if 'source' in metadata and metadata['source']:
+        return metadata['source']
+    
+    if 'product' in metadata and metadata['product']:
+        return f"Product: {metadata['product']}"
+    
+    if 'tag' in metadata and metadata['tag']:
+        return f"Tag: {metadata['tag']}"
+    
+    # Try additional potential keys
+    for key in ['title', 'name', 'document_type', 'category', 'type']:
+        if key in metadata and metadata[key]:
+            return f"{key.capitalize()}: {metadata[key]}"
+    
+    # If we have metadata but no recognized keys, show all available keys
+    if metadata:
+        debug_metadata = {k: v for k, v in metadata.items() if k != 'page_content'}
+        logger.debug(f"Unrecognized metadata format: {debug_metadata}")
+        
+        # Try to find any non-empty value
+        for key, value in metadata.items():
+            if value and isinstance(value, str) and key != 'page_content':
+                return f"{key}: {value}"
+    
+    return "unknown (no recognized metadata)"
 
 def validate_products_in_sheet(records, product_role, available_products):
     invalid_products = []
@@ -75,6 +123,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
     print(f"Product index path: {INDEX_DIR}")
     print(f"Customer index path: {customer_index_path if customer_index_path else 'None'}")
     print(f"Embedding model: {EMBEDDING_MODEL}")
+    print(f"Reference validation: Enabled (max links: {MAX_LINKS_PROVIDED})")
     print("="*50 + "\n")
     
     product_focus_str = ", ".join(selected_products) if selected_products else "None"
@@ -133,14 +182,15 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             if product_docs:
                 print(f"\n[CHAIN] Product Document Sources:")
                 for idx, doc in enumerate(product_docs[:3]):
-                    source = doc.metadata.get('source', 
-                                            doc.metadata.get('product', 
-                                                           doc.metadata.get('tag', 'unknown')))
+                    source = extract_product_metadata(doc)
                     print(f"[CHAIN]   #{idx+1}: {source}")
                     
-                    metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() if k in ['product', 'tag', 'source']])
-                    if metadata_str:
-                        print(f"[CHAIN]      Metadata: {metadata_str}")
+                    if hasattr(doc, 'metadata'):
+                        # Print key metadata fields for debugging
+                        metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() 
+                                               if k in ['product', 'tag', 'source', 'title', 'type'] and v])
+                        if metadata_str:
+                            print(f"[CHAIN]      Metadata: {metadata_str}")
                     
                     print(f"[CHAIN]      Preview: {doc.page_content[:100]}...")
                 
@@ -196,7 +246,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             if product_docs:
                 initial_context += "\n\n--- PRODUCT CONTEXT ---\n\n"
                 initial_context += product_docs[0].page_content
-                product_doc_source = product_docs[0].metadata.get('source', 'unknown')
+                product_doc_source = extract_product_metadata(product_docs[0])
                 print(f"[CHAIN] Added product document #1 from: {product_doc_source}")
             
             if has_customer_docs and len(customer_docs) > 0:
@@ -360,9 +410,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 if has_product_doc:
                     refinement_context += "\n\n--- PRODUCT CONTEXT ---\n\n"
                     refinement_context += remaining_product_docs[i].page_content
-                    product_source = remaining_product_docs[i].metadata.get('source', 
-                                                                         remaining_product_docs[i].metadata.get('product', 
-                                                                                                             remaining_product_docs[i].metadata.get('tag', 'unknown')))
+                    product_source = extract_product_metadata(remaining_product_docs[i])
                 
                 if has_customer_doc:
                     refinement_context += "\n\n--- CUSTOMER CONTEXT ---\n\n"
@@ -541,9 +589,21 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     "references": []
                 }
             
+            # ADDED: Validate and filter references
+            print(f"[CHAIN] Validating references...")
+            original_ref_count = len(parsed.get('references', []))
+            
+            # Process references (validate and limit to MAX_LINKS_PROVIDED)
+            parsed = process_references(parsed)
+            
+            # Get the filtered reference count after validation
+            filtered_ref_count = len(parsed.get('references', []))
+            
+            print(f"[CHAIN] References: {filtered_ref_count} valid out of {original_ref_count} total (limited to {MAX_LINKS_PROVIDED} max)")
+            
             answer = clean_json_answer(parsed.get("answer", ""))
             compliance = validate_compliance_value(parsed.get("compliance", "PC"))
-            references = parsed.get("references", [])
+            references = parsed.get("references", [])  # These are now validated references
             
             print(f"[RESULT] Extracted answer length: {len(answer)}")
             print(f"[RESULT] Compliance: {compliance}")
@@ -551,20 +611,8 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             combined_text = answer
             if references:
-                clean_references = []
-                for ref in references:
-                    if not ref or not isinstance(ref, str):
-                        continue
-                    clean_ref = ref.strip()
-                    if clean_ref and clean_ref not in clean_references:
-                        clean_references.append(clean_ref)
-                
-                if clean_references:
-                    references_text = "\n\nReferences:\n" + "\n".join(clean_references)
-                    combined_text += references_text
-                    references = clean_references
-                else:
-                    references = []
+                references_text = "\n\nReferences:\n" + "\n".join(references)
+                combined_text += references_text
             
             if ANSWER_ROLE in output_columns:
                 batch_updates.append({
@@ -603,9 +651,7 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             if question_logger:
                 sources = []
                 for doc in product_docs:
-                    source = doc.metadata.get('source', 
-                                            doc.metadata.get('product', 
-                                                           doc.metadata.get('tag', 'unknown')))
+                    source = extract_product_metadata(doc)
                     sources.append(source)
                 
                 for doc in customer_docs:
@@ -624,7 +670,8 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     "compliance": compliance,
                     "references": references,
                     "sources_used": sources,
-                    # Add chain log data
+                    "original_references": original_ref_count,
+                    "valid_references": filtered_ref_count,
                     "chain_log_data": chain_log_data
                 }
                 
@@ -636,4 +683,3 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             print(f"[ERROR] Exception details: {traceback.format_exc()}")
             if question_logger:
                 question_logger.log_error(row_num, question, e)
-            time.sleep(API_THROTTLE_DELAY)
