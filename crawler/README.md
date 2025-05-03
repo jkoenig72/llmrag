@@ -16,18 +16,8 @@ The crawler performs a breadth-first search on documentation pages, processes th
 - **Comprehensive metrics**: Tracks crawl performance and generates detailed logs
 - **Customizable depth and limits**: Configure how deep to crawl and how many pages to process
 - **Robust error handling**: Gracefully handles network issues and malformed pages
-
-## Architecture Diagrams
-
-### Flow Diagram
-![Flow Diagram](../images/crawler_f.png)
-
-This diagram shows the major components of the crawler and how they interact.
-
-### Sequence Diagram
-![Sequence Diagram](../images/crawler_s.png)
-
-This sequence diagram illustrates the typical flow of a crawl operation from initialization to completion.
+- **Cookie handling**: Automatically dismisses cookie consent popups
+- **Content cleaning**: Removes irrelevant elements and normalizes content
 
 ## Requirements
 
@@ -40,7 +30,7 @@ This sequence diagram illustrates the typical flow of a crawl operation from ini
 1. Clone this repository:
 ```bash
 git clone https://github.com/jkoenig72/llmrag.git
-cd crawler
+cd llmrag/crawler
 ```
 
 2. Install dependencies:
@@ -52,13 +42,13 @@ pip install -r requirements.txt
 
 The crawler's behavior is configured in `config.py`. Key settings include:
 
-- `BASE_OUTPUT_FOLDER`: Where to store markdown files
-- `MAX_LINK_LEVEL`: Maximum depth to crawl
-- `MAX_PAGES_PER_PRODUCT`: Maximum pages to process per product
+- `BASE_OUTPUT_FOLDER`: Where to store markdown files (default: "RAG_Collection")
+- `MAX_LINK_LEVEL`: Maximum depth to crawl (default: 50)
+- `MAX_PAGES_PER_PRODUCT`: Maximum pages to process per product (default: 50000)
 - `PRODUCT_URL_PREFIXES`: URL patterns to categorize content by product
 - `ALLOWED_DOMAINS`: Domains the crawler is allowed to visit
 
-Starting URLs are defined in `start_links.json`.
+Starting URLs are defined in `start_links.json`. You can modify this file to focus on specific products or documentation sections.
 
 ## Usage
 
@@ -74,6 +64,15 @@ This will:
 3. Process pages up to the configured depth limit
 4. Generate markdown files organized by product
 5. Create summary logs with metrics
+
+### Advanced Usage
+
+You can modify the crawler behavior by editing the configuration files:
+
+- **Adjust crawling scope**: Edit `MAX_LINK_LEVEL` in `config.py` to change how deep the crawler goes
+- **Change product focus**: Modify `start_links.json` to focus on specific products
+- **Add new product categories**: Update `PRODUCT_URL_PREFIXES` in `config.py`
+- **Limit page count**: Adjust `MAX_PAGES_PER_PRODUCT` in `config.py` to control how many pages are processed per product
 
 ## Project Structure
 
@@ -110,7 +109,7 @@ RAG_Collection/
 ## Markdown Output Format
 
 Each output file includes:
-- YAML frontmatter with metadata
+- YAML frontmatter with metadata (date, title, product, category, etc.)
 - Auto-generated table of contents
 - Cleaned and formatted markdown content
 
@@ -143,7 +142,20 @@ Sales Cloud is a customer relationship management (CRM) platform...
 
 ### Adding New Product Categories
 
-To add a new product category, update `PRODUCT_URL_PREFIXES` in `config.py` and add starting URLs to `start_links.json`.
+To add a new product category:
+1. Update `PRODUCT_URL_PREFIXES` in `config.py` with appropriate URL patterns
+2. Add starting URLs to `start_links.json`
+
+Example:
+```json
+{
+  "product": "New_Product_Name",
+  "urls": [
+    "https://help.example.com/starting_page",
+    "https://docs.example.com/another_page"
+  ]
+}
+```
 
 ### Supporting New Page Types
 
@@ -158,7 +170,15 @@ To support a new page type:
 - **Network Errors**: Verify network connectivity to Salesforce domains
 - **Performance Problems**: Adjust the multithreading configuration in `main.py`
 - **Rate Limiting**: Add delays between requests in `browser_utils.py`
+- **Memory Issues**: For very large crawls, consider running in batches by modifying `MAX_PAGES_PER_PRODUCT`
 
-## License and Contributions
+## Best Practices
+
+- Start with a small set of URLs and limited depth to test your configuration
+- Use the summary logs to monitor crawling progress and identify issues
+- Check the `skipped_404.log` to identify broken links
+- Review a sample of generated markdown files to ensure quality
+
+**License and Contributions**
 
 Maintained by Master Control Program. Contributions and feedback are welcome — please submit pull requests or open issues on GitHub.
