@@ -65,7 +65,7 @@ source env.sh
 
 ## Usage
 
-!There is an working faiss vector db from around 110k markdown files attached to the V1.0.0 release. You can skip running the crawler and rag tools!  
+#### There is an working faiss vector db from around 110k markdown files attached to the V1.0.0 release. You can skip running the crawler and rag tools  
 
 Each module can be used independently or as part of a complete pipeline:
 
