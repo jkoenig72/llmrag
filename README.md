@@ -14,8 +14,8 @@ Simple start them in server mode and let the scripts talk to them on localhost v
 
 The project consists of three main modules:
 
-- **crawler/**: Multithreaded documentation crawler to collect and convert Salesforce and MuleSoft documentation into markdown format.
-- **rag/**: Document processor that builds vector embeddings (using Hugging Face models) and manages FAISS indices for semantic search.
+- **crawler/**: Multithreaded documentation crawler to collect and convert Salesforce and MuleSoft documentation into markdown format. 
+- **rag/**: Document processor that builds vector embeddings (using Hugging Face models) and manages FAISS indices for semantic search. I have added a faiss vector DB with around 110k markdowns to the release. Its 7z format in 4 parts, you need to rename as git only allows certain extensions to upload. 
 - **rfp/**: Question answering system integrated with Google Sheets for RFI/RFP workflows, including compliance scoring (FC, PC, NC, NA).
 
 This architecture enables efficient retrieval-augmented generation workflows, ideal for answering complex questions about Salesforce capabilities with reliable grounding in product documentation.
