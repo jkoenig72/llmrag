@@ -8,9 +8,6 @@ import time
 import requests
 
 def is_404_page(soup):
-    """
-    Detect 404 pages across Salesforce Help, Developer, Trailhead, and MuleSoft.
-    """
     title_404 = soup.title and "404" in soup.title.text.lower()
     print(f"[DEBUG] title_404: {title_404}")
 
@@ -20,14 +17,14 @@ def is_404_page(soup):
 
     help_404 = "we looked high and low" in h1_text or "not found" in h1_text
     dev_404 = soup.find(string=lambda t: t and "head back to the space station" in t.lower()) is not None
-    trail_404 = soup.find(string=lambda t: t and "page you’re trying to view isn’t here" in t.lower()) is not None
+    trail_404 = soup.find(string=lambda t: t and "page you're trying to view isn't here" in t.lower()) is not None
 
     mule_404 = soup.find("h2", string=lambda t: t and (
         "it may be an old link or may have been moved" in t.lower() or
         "404 error. your page was not found." in t.lower()
     )) is not None
 
-    internal_chrome_error = "this site can’t be reached" in soup.get_text().lower()
+    internal_chrome_error = "this site can't be reached" in soup.get_text().lower()
 
     print(f"[DEBUG] help_404: {help_404}, dev_404: {dev_404}, trail_404: {trail_404}, mule_404: {mule_404}, internal_chrome_error: {internal_chrome_error}")
 
@@ -67,7 +64,7 @@ def check_salesforce_page(url):
         except:
             print("[DEBUG] <h2> tag not detected within timeout")
 
-        time.sleep(2)  # allow for JS rendering fallback
+        time.sleep(2)
 
         html = driver.page_source
         soup = BeautifulSoup(html, "html.parser")
@@ -90,23 +87,18 @@ def check_salesforce_page(url):
 
 if __name__ == "__main__":
     test_urls = [
-        # Help
         "https://help.salesforce.com/s/articleView?id=data.c360_a_calculated_insights.htm&type=5",
         "https://help.salesforce.com/s/articleView?id=sf.c360_a_segment_operators.htm&type=5",
 
-        # Developer
         "https://developer.salesforce.com/docs/einstein/genai/guide/get-started.html",
         "https://developer.salesforce.com/test",
 
-        # Trailhead
         "https://trailhead.salesforce.com/content/learn/trails/get-ready-for-agentforce",
         "https://trailhead.salesforce.com/content/learn/trails/get-ready-for-agentforce5656",
 
-        # MuleSoft
         "https://www.mulesoft.com/platform/enterprise-integration",
         "https://www.mulesoft.com/platform/enterprise-integration123",
 
-        # MuleSoft Developer
         "https://developer.mulesoft.com/tutorials-and-howtos/getting-started/hello-mule/",
         "https://developer.mulesoft.com/tutorials-and-howtos/getting-started/hello-mule2/"
     ]

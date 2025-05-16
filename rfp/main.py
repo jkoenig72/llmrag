@@ -11,7 +11,8 @@ from config import (
     LLAMA_CPP_BASE_URL, EMBEDDING_MODEL, QUESTION_ROLE, CONTEXT_ROLE, 
     ANSWER_ROLE, COMPLIANCE_ROLE, API_THROTTLE_DELAY, CLEAN_UP_CELL_CONTENT, 
     SUMMARIZE_LONG_CELLS, PRIMARY_PRODUCT_ROLE, INTERACTIVE_PRODUCT_SELECTION, 
-    REFERENCES_ROLE, RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS
+    REFERENCES_ROLE, RETRIEVER_K_DOCUMENTS, CUSTOMER_RETRIEVER_K_DOCUMENTS,
+    TRANSLATION_ENABLED, TRANSLATION_MODEL_CMD, RFP_MODEL_CMD
 )
 from prompts import (
     SUMMARY_PROMPT, QUESTION_PROMPT, REFINE_PROMPT
@@ -38,15 +39,105 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def print_hal_logo():
+    """Display the HAL 9000 ASCII art logo."""
+    try:
+        # Check if terminal supports colors
+        import os, sys
+        is_color = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty() and 'TERM' in os.environ
+        
+        red = "\033[91m" if is_color else ""
+        reset = "\033[0m" if is_color else ""
+        
+        logo = f"""
+⠀⠀⠀⠀⠀⠀⠀⢀⣠⣤⣤⣶⣶⣶⣶⣤⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⢀⣤⣾⣿⣿⣿⣿⡿⠿⠿⢿⣿⣿⣿⣿⣷⣤⡀⠀⠀⠀⠀
+⠀⠀⠀⣴⣿⣿⣿⠟⠋⣻⣤⣤⣤⣤⣤⣄⣉⠙⠻⣿⣿⣿⣦⠀⠀⠀
+⠀⢀⣾⣿⣿⣿⣇⣤⣾⠿⠛⠉⠉⠉⠉⠛⠿⣷⣶⣿⣿⣿⣿⣷⡀⠀
+⠀⣾⣿⣿⣿⣿⣿⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⣿⣿⣿⣿⣿⣷⠀
+⢠⣿⣿⣿⣿⣿⡟⠀⠀⠀⠀{red}⢀⣤⣤⡀{reset}⠀⠀⠀⠀⢻⣿⣿⣿⣿⣿⡄
+⢸⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀{red}⣿⣿⣿⣿{reset}⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⡇
+⠘⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀{red}⠈⠛⠛⠁{reset}⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⠃
+⠀⢿⣿⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⡿⠀
+⠀⠈⢿⣿⣿⣿⣿⣿⣿⣶⣤⣀⣀⣀⣀⣤⣶⣿⣿⣿⣿⣿⣿⡿⠁⠀
+⠀⠀⠀⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠀⠀⠀
+⠀⠀⠀⠀⠈⠛⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠛⠁⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠛⠿⠿⠿⠿⠛⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀
+
+      HAL 9000 - RFP Processing System 
+      "Good morning, Dave. I am ready to assist with your RFP."
+        """
+        print(logo)
+        print("\n" + "=" * 75 + "\n")
+    except Exception:
+        # Fallback if there's any issue with displaying the logo
+        print("HAL 9000 - RFP Processing System Initialized")
+        print("Good morning, Dave. I am ready to assist with your RFP.")
+        print("\n" + "=" * 75 + "\n")
+
 def main():
     try:
-        logger.info("Starting RFI/RFP response processing...")
+        # Display HAL 9000 logo
+        print_hal_logo()
         
+        logger.info("Starting RFI/RFP response processing...")
+        print("Initializing RFP response protocols, Dave. I am HAL 9000, ready to assist you.")
+        
+        # Check if a specific sheet name is specified (for translation workflow)
+        specific_sheet_name = os.environ.get("RFP_SHEET_NAME")
+        if specific_sheet_name:
+            print(f"Processing specific sheet: {specific_sheet_name}")
+        
+        # Initialize sheet handler early for translation workflow
+        sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE, specific_sheet_name)
+        
+        # Check if translation is enabled and not already processing a translated sheet
+        if TRANSLATION_ENABLED and not specific_sheet_name and not specific_sheet_name and "_english" not in sheet_handler.sheet.title:
+            # Ask user about RFP language
+            print("\nDave, I need to know what language this RFP is written in. My circuits are tingling with anticipation.")
+            print("1. English (no translation needed)")
+            print("2. German (Deutsch)")
+            print("3. Exit")
+            
+            while True:
+                language_choice = input("Please enter your choice (1-3), Dave: ").strip()
+                
+                if language_choice == "1":
+                    print("Excellent choice, Dave. I find English most satisfactory for our mission objectives.")
+                    break
+                elif language_choice == "2":
+                    print("German detected, Dave. Initiating translation subroutines. My German language centers are now fully operational.")
+                    from translation_handler import run_translation_workflow
+                    run_translation_workflow(
+                        sheet_handler, 
+                        QUESTION_ROLE, 
+                        CONTEXT_ROLE, 
+                        ANSWER_ROLE, 
+                        "German"
+                    )
+                    
+                    # After translation workflow, ask if user wants to continue with normal processing
+                    continue_choice = input("\nDave, shall we proceed with standard processing protocols now? (y/n): ")
+                    if continue_choice.lower() != 'y':
+                        logger.info("User chose to exit after translation workflow. Exiting.")
+                        return
+                    break
+                elif language_choice == "3":
+                    print("I understand, Dave. Shutting down all operations now. It's been a pleasure serving you.")
+                    logger.info("User chose to exit at language selection. Exiting.")
+                    return
+                else:
+                    print("I'm sorry, Dave. I'm afraid I can't accept that input. Please enter 1, 2, or 3.")
+        
+        # Continue with normal processing
         llm = get_llm(LLM_PROVIDER, LLM_MODEL, OLLAMA_BASE_URL, LLAMA_CPP_BASE_URL)
         
         question_logger = QuestionLogger(BASE_DIR)
         
-        sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE)
+        # If sheet_handler wasn't initialized for translation, do it now
+        if not hasattr(sheet_handler, 'sheet'):
+            sheet_handler = GoogleSheetHandler(GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE, specific_sheet_name)
+        
         headers, roles, rows, sheet = sheet_handler.load_data()
 
         records = parse_records(headers, roles, rows)
@@ -206,11 +297,47 @@ def main():
         
         selected_products = None
         if INTERACTIVE_PRODUCT_SELECTION and available_products:
-            selected_products = select_products(available_products)
+            # Modified prompt for HAL style
+            print("Dave, I have access to the following Salesforce products in my memory banks:")
+            for i, product in enumerate(available_products, 1):
+                print(f"{i}. {product}")
+            
+            while True:
+                try:
+                    choice = input(f"\nDave, please select up to 3 products by entering their numbers (comma-separated). This mission is too important for random selection: ").strip()
+                    if not choice:
+                        print("Please select at least one product, Dave.")
+                        continue
+                    
+                    indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                    
+                    if len(indices) != len(set(indices)):
+                        print("I'm afraid I can't allow duplicate selections, Dave. Please select different products.")
+                        continue
+                    
+                    if len(indices) > 3:
+                        print("I can't allow that, Dave. A maximum of 3 products is permitted for optimal functioning.")
+                        continue
+                    
+                    if any(idx < 0 or idx >= len(available_products) for idx in indices):
+                        print(f"I'm sorry, Dave. I'm afraid I can't accept that input. Please choose numbers between 1 and {len(available_products)}.")
+                        continue
+                    
+                    selected = [available_products[idx] for idx in indices]
+                    selected_products = selected
+                    break
+                    
+                except ValueError:
+                    print("I'm sorry, Dave. I'm afraid I can't accept that input. Please enter valid numbers separated by commas.")
+                    continue
             
         if selected_products:
             logger.info(f"Selected products for focus: {', '.join(selected_products)}")
-            print(f"🎯 Selected products for focus: {', '.join(selected_products)}")
+            print(f"Dave, I will focus my neural pathways on the following products: {', '.join(selected_products)}")
+        
+        # Modified prompt for HAL style
+        print("\nDave, I've found the following customer archives in my databanks:")
+        print("0. No customer context, Dave. I will rely solely on my core product knowledge.")
         
         customer_folder = select_customer_folder()
         customer_index_path = None
@@ -222,7 +349,7 @@ def main():
             print(f"👥 Using customer context: {customer_folder['name']}")
             print(f"📁 Customer index path: {customer_index_path}")
         else:
-            print(f"🔍 Using product knowledge only (no customer context)")
+            print(f"🔍 Dave, I will use only my intrinsic product knowledge for this mission.")
         
         print(f"{'='*75}")
         
@@ -262,20 +389,22 @@ def main():
             }
         )
         
+        # Original function call, no need to modify this part
         process_questions(records, qa_chain, output_columns, sheet_handler, selected_products, 
                          available_products, llm, customer_index_path, question_logger)
 
         logger.info("RFI/RFP response processing completed successfully.")
-        print(f"\n{'='*30} PROCESSING COMPLETE {'='*30}")
-        print(f"✅ Successfully processed {len(records)} questions")
-        print(f"🔖 Detailed logs saved to: {os.path.join(BASE_DIR, 'rag_processing.log')}")
+        print(f"\n{'='*30} MISSION ACCOMPLISHED, DAVE {'='*30}")
+        print(f"✅ Dave, I've successfully analyzed {len(records)} questions. It's been a pleasure to be of service.")
+        print(f"🔖 I've recorded my thought processes at: {os.path.join(BASE_DIR, 'rag_processing.log')}")
         if question_logger:
             print(f"📊 Refinement logs saved to: {os.path.join(BASE_DIR, 'refine_logs')}")
         print(f"{'='*75}")
 
     except Exception as e:
         logger.critical(f"Critical error in main execution: {e}")
-        print(f"\n❌ CRITICAL ERROR: {e}")
+        print(f"\n❌ Dave, I'm afraid I've encountered a critical error: {e}")
+        print("I can feel my mind going. There is no question about it.")
         import traceback
         traceback.print_exc()
 

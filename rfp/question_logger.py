@@ -10,16 +10,13 @@ logger = logging.getLogger(__name__)
 
 class QuestionLogger:
     def __init__(self, base_dir: str):
-        # Set up main log directory
         self.refine_log_dir = os.path.join(base_dir, "refine_logs")
         os.makedirs(self.refine_log_dir, exist_ok=True)
         
-        # Set up detailed chain logs directory 
         self.chain_log_dir = os.path.join(base_dir, "chain_logs")
         os.makedirs(self.chain_log_dir, exist_ok=True)
         
     def _create_filename(self, row_num: int, question: str, directory: str = None) -> str:
-        # Clean question text for filename
         clean_question = re.sub(r'[^\w\s-]', '', question.lower())
         clean_question = re.sub(r'\s+', '_', clean_question)
         clean_question = clean_question[:40]
@@ -30,7 +27,6 @@ class QuestionLogger:
             return os.path.join(self.refine_log_dir, f"{row_num}_{clean_question}.log")
     
     def log_enhanced_processing(self, row_num: int, log_data: Dict[str, Any]):
-        # Create summary log as before
         question = log_data.get("question", "Unknown question")
         filename = self._create_filename(row_num, question, self.refine_log_dir)
         
@@ -83,24 +79,10 @@ class QuestionLogger:
         
         logger.info(f"Created enhanced refine log: {os.path.basename(filename)}")
         
-        # Write detailed chain log if available
         if 'chain_log_data' in log_data and log_data['chain_log_data']:
             self.log_refinement_chain(row_num, question, log_data['chain_log_data'])
     
     def log_refinement_chain(self, row_num: int, question: str, chain_data: List[Dict[str, Any]]):
-        """
-        Log the complete refinement chain including all LLM requests and responses.
-        
-        Parameters
-        ----------
-        row_num : int
-            Row number in the Google Sheet
-        question : str
-            The original question text
-        chain_data : List[Dict[str, Any]]
-            List of dictionaries containing the data for each step in the chain
-        """
-        # Create the chain log filename
         chain_filename = self._create_filename(row_num, question, self.chain_log_dir).replace('.log', '_chain.log')
         
         with open(chain_filename, 'w', encoding='utf-8') as f:
@@ -109,22 +91,18 @@ class QuestionLogger:
             f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 100 + "\n\n")
             
-            # Question Information
             f.write(f"QUESTION: {question}\n\n")
             
-            # Process each step in the chain
             previous_answer = None
             
             for step_idx, step_data in enumerate(chain_data):
                 step_num = step_idx + 1
                 step_type = step_data.get('step_type', 'Unknown')
                 
-                # Step header
                 f.write("=" * 100 + "\n")
                 f.write(f"STEP {step_num}: {step_type} {'(INITIAL)' if step_type == 'PROMPT' and step_num == 1 else ''}\n")
                 f.write("=" * 100 + "\n\n")
                 
-                # Context information
                 if 'context_info' in step_data:
                     f.write("CONTEXT INFORMATION:\n")
                     f.write("-" * 80 + "\n")
@@ -148,21 +126,18 @@ class QuestionLogger:
                     
                     f.write("\n")
                 
-                # Prompt sent to LLM
                 if 'prompt' in step_data:
                     f.write("PROMPT SENT TO LLM:\n")
                     f.write("-" * 80 + "\n")
                     f.write(step_data['prompt'])
                     f.write("\n\n")
                 
-                # Raw LLM response
                 if 'raw_response' in step_data:
                     f.write("RAW LLM RESPONSE:\n")
                     f.write("-" * 80 + "\n")
                     f.write(step_data['raw_response'])
                     f.write("\n\n")
                 
-                # Parsed answer
                 if 'parsed_answer' in step_data:
                     f.write("PARSED ANSWER:\n")
                     f.write("-" * 80 + "\n")
@@ -182,7 +157,6 @@ class QuestionLogger:
                     
                     f.write("\n\n")
                     
-                    # Calculate and show diff from previous answer
                     if previous_answer and isinstance(parsed, dict) and 'answer' in parsed:
                         current_answer = parsed.get('answer', '')
                         prev_answer_text = previous_answer.get('answer', '')
@@ -191,12 +165,11 @@ class QuestionLogger:
                             f.write("CHANGES FROM PREVIOUS STEP:\n")
                             f.write("-" * 80 + "\n")
                             
-                            # Get diff between previous and current answer
                             diff = difflib.unified_diff(
                                 prev_answer_text.splitlines(),
                                 current_answer.splitlines(),
                                 lineterm='',
-                                n=2  # Context lines
+                                n=2
                             )
                             
                             diff_text = '\n'.join(diff)
@@ -207,14 +180,12 @@ class QuestionLogger:
                             
                             f.write("\n\n")
                             
-                            # Check for compliance changes
                             prev_compliance = previous_answer.get('compliance', '')
                             current_compliance = parsed.get('compliance', '')
                             
                             if prev_compliance != current_compliance:
                                 f.write(f"Compliance rating changed: {prev_compliance} → {current_compliance}\n\n")
                             
-                            # Check for references changes
                             prev_refs = set(previous_answer.get('references', []))
                             current_refs = set(parsed.get('references', []))
                             
@@ -232,24 +203,19 @@ class QuestionLogger:
                                     f.write(f"- {ref}\n")
                                 f.write("\n")
                     
-                    # Update previous answer for next comparison
                     if isinstance(parsed, dict):
                         previous_answer = parsed
                 
-                # Processing time
                 if 'processing_time' in step_data:
                     f.write(f"Processing Time: {step_data['processing_time']:.2f} seconds\n\n")
                 
-                # Error information if any
                 if 'error' in step_data:
                     f.write("ERROR INFORMATION:\n")
                     f.write("-" * 80 + "\n")
                     f.write(f"Error: {step_data['error']}\n\n")
                 
-                # Separator between steps
                 f.write("\n" + "-" * 100 + "\n\n")
             
-            # Final summary
             f.write("=" * 100 + "\n")
             f.write("CHAIN EXECUTION SUMMARY\n")
             f.write("=" * 100 + "\n\n")
@@ -274,7 +240,6 @@ class QuestionLogger:
                 else:
                     f.write(f"Final Result: {str(final_result)}\n")
             
-            # Total steps and processing time
             total_time = sum(step.get('processing_time', 0) for step in chain_data if 'processing_time' in step)
             f.write(f"Total Steps: {len(chain_data)}\n")
             f.write(f"Total Processing Time: {total_time:.2f} seconds\n")

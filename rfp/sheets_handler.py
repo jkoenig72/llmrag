@@ -10,9 +10,21 @@ from config import GOOGLE_API_MAX_RETRIES, GOOGLE_API_RETRY_DELAY, API_THROTTLE_
 logger = logging.getLogger(__name__)
 
 class GoogleSheetHandler:
-    def __init__(self, sheet_id: str, credentials_file: str):
+    def __init__(self, sheet_id: str, credentials_file: str, specific_sheet_name: str = None):
         self.client = gspread.service_account(filename=credentials_file)
-        self.sheet = self.client.open_by_key(sheet_id).sheet1
+        self.spreadsheet = self.client.open_by_key(sheet_id)
+        
+        if specific_sheet_name:
+            try:
+                self.sheet = self.spreadsheet.worksheet(specific_sheet_name)
+                logger.info(f"Using specific sheet: {specific_sheet_name}")
+                print(f"Using specific sheet: {specific_sheet_name}")
+            except gspread.exceptions.WorksheetNotFound:
+                logger.warning(f"Sheet {specific_sheet_name} not found. Using the first sheet.")
+                self.sheet = self.spreadsheet.sheet1
+        else:
+            self.sheet = self.spreadsheet.sheet1
+            
         self.sheet_id = sheet_id
         self.references_column_index = None
 

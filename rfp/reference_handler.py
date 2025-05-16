@@ -3,7 +3,6 @@ import time
 import requests
 from typing import List, Dict, Any
 
-# For Selenium-based link validation
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -11,15 +10,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
-# Configuration
-MAX_LINKS_PROVIDED = 2  # Maximum number of references to include in each answer
+MAX_LINKS_PROVIDED = 2
 
 logger = logging.getLogger(__name__)
 
 def is_404_page(soup):
-    """
-    Detect 404 pages across Salesforce Help, Developer, Trailhead, and MuleSoft.
-    """
     title_404 = soup.title and "404" in soup.title.text.lower()
     logger.debug(f"title_404: {title_404}")
 
@@ -43,16 +38,6 @@ def is_404_page(soup):
     return title_404 or help_404 or dev_404 or trail_404 or mule_404 or internal_chrome_error
 
 def check_salesforce_help_page(url: str) -> bool:
-    """
-    Check if a Salesforce documentation link is valid using Selenium.
-    Comprehensive checks for various Salesforce domains.
-    
-    Args:
-        url: The URL to check
-        
-    Returns:
-        bool: True if the link works, False otherwise
-    """
     logger.info(f"Checking: {url}")
     try:
         if not any(domain in url for domain in ["www.mulesoft.com", "developer.mulesoft.com"]):
@@ -90,7 +75,7 @@ def check_salesforce_help_page(url: str) -> bool:
         except:
             logger.debug("<h2> tag not detected within timeout")
 
-        time.sleep(2)  # allow for JS rendering fallback
+        time.sleep(2)
 
         html = driver.page_source
         soup = BeautifulSoup(html, "html.parser")
@@ -116,39 +101,25 @@ def check_salesforce_help_page(url: str) -> bool:
 
 
 def validate_and_filter_references(references: List[str], max_links: int = MAX_LINKS_PROVIDED) -> List[str]:
-    """
-    Validate and filter references to ensure only working links are included.
-    
-    Args:
-        references: List of reference URLs extracted from LLM response
-        max_links: Maximum number of links to include
-        
-    Returns:
-        List[str]: Filtered list of working reference URLs, limited to max_links
-    """
     if not references:
         return []
     
     logger.info(f"Validating {len(references)} references...")
     
-    # Check each link and keep only the working ones
     valid_refs = []
     
     for url in references:
         if check_salesforce_help_page(url):
             valid_refs.append(url)
     
-    # Log the results
     logger.info(f"Validation complete: {len(valid_refs)}/{len(references)} links are valid")
     
-    # Limit to max_links if needed
     if len(valid_refs) > max_links:
         logger.info(f"Limiting to {max_links} references")
         limited_refs = valid_refs[:max_links]
     else:
         limited_refs = valid_refs
     
-    # Log the final references
     for i, ref in enumerate(limited_refs):
         logger.info(f"Reference {i+1}: {ref}")
     
@@ -156,49 +127,14 @@ def validate_and_filter_references(references: List[str], max_links: int = MAX_L
 
 
 def process_references(parsed_response: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Process the references in an LLM response.
-    
-    Args:
-        parsed_response: The parsed JSON response from the LLM
-        
-    Returns:
-        Dict[str, Any]: The updated response with validated references
-    """
-    # Extract references if present
     references = parsed_response.get("references", [])
     
     if not references:
         logger.info("No references found in LLM response.")
         return parsed_response
     
-    # Validate and filter references
     valid_references = validate_and_filter_references(references)
     
-    # Update the parsed response
     parsed_response["references"] = valid_references
     
     return parsed_response
-
-
-if __name__ == "__main__":
-    # Set up logging
-    logging.basicConfig(level=logging.INFO, 
-                      format="%(asctime)s [%(levelname)s] %(message)s")
-    
-    # Test with sample references
-    test_references = [
-        # Known working link
-        "https://help.salesforce.com/s/articleView?id=data.c360_a_calculated_insights.htm&type=5",
-        # Known non-working links
-        "https://help.salesforce.com/s/articleView?id=sf.om_order_lifecycle.htm&type=5",
-        "https://help.salesforce.com/s/articleView?id=sf.om_decomposition_plans.htm&type=5"
-    ]
-    
-    # Test the validation and filtering
-    print("Testing reference validation...")
-    valid_refs = validate_and_filter_references(test_references)
-    
-    print(f"\nValid references ({len(valid_refs)}/{len(test_references)}):")
-    for ref in valid_refs:
-        print(f" - {ref}")

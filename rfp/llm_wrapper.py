@@ -39,12 +39,21 @@ def check_llama_server():
 
 def get_llm(llm_provider: str, llm_model: str, 
           ollama_base_url: str, llama_cpp_base_url: str):
-    logger.info(f"Initializing LLM provider: {llm_provider}")
+    logger.info(f"Initializing LLM provider: {llm_provider} (model: {llm_model})")
     
     if llm_provider == "ollama":
         from langchain_ollama import OllamaLLM
         return OllamaLLM(model=llm_model, base_url=ollama_base_url)
     elif llm_provider == "llamacpp":
+        if llm_model == "translation":
+            logger.info("Using translation model mode - skipping server check")
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                base_url=f"{llama_cpp_base_url}/v1",
+                api_key="not-needed",
+                model="local-model"
+            )
+            
         if check_llama_server():
             response = input("\nDo you want to continue with the running llama-server? (y/n): ")
             if response.lower() != 'y':

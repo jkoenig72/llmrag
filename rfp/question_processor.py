@@ -19,31 +19,19 @@ from llm_utils import (
 from text_processing import clean_text
 from embedding_manager import EmbeddingManager
 from prompts import QUESTION_PROMPT, REFINE_PROMPT
-# Import the reference handler
 from reference_handler import process_references, MAX_LINKS_PROVIDED
 
 logger = logging.getLogger(__name__)
 
 def extract_product_metadata(doc):
-    """
-    Extract product information from document metadata with improved fallbacks.
-    
-    Args:
-        doc: Document object with metadata
-        
-    Returns:
-        str: Product or source information, or "unknown" if not found
-    """
     if not hasattr(doc, 'metadata'):
         return "unknown (no metadata)"
     
     metadata = doc.metadata
     
-    # Debug all available metadata keys
     metadata_keys = list(metadata.keys())
     logger.debug(f"Available metadata keys: {metadata_keys}")
     
-    # Try standard keys first
     if 'source' in metadata and metadata['source']:
         return metadata['source']
     
@@ -53,17 +41,14 @@ def extract_product_metadata(doc):
     if 'tag' in metadata and metadata['tag']:
         return f"Tag: {metadata['tag']}"
     
-    # Try additional potential keys
     for key in ['title', 'name', 'document_type', 'category', 'type']:
         if key in metadata and metadata[key]:
             return f"{key.capitalize()}: {metadata[key]}"
     
-    # If we have metadata but no recognized keys, show all available keys
     if metadata:
         debug_metadata = {k: v for k, v in metadata.items() if k != 'page_content'}
         logger.debug(f"Unrecognized metadata format: {debug_metadata}")
         
-        # Try to find any non-empty value
         for key, value in metadata.items():
             if value and isinstance(value, str) and key != 'page_content':
                 return f"{key}: {value}"
@@ -158,7 +143,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             products_to_focus = selected_products
 
         try:
-            # Initialize a list to hold chain log data for this question
             chain_log_data = []
             
             enriched_question = f"{question}\n\n[Additional Info]\n{additional_context}"
@@ -168,13 +152,15 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             print(f"[CHAIN] Product focus: {product_focus_str}")
             
             print(f"[CHAIN] Starting product context retrieval...")
+            print(f"[CHAIN] Product filter: {', '.join(products_to_focus) if products_to_focus else 'None'}")
             
             product_docs = embedding_manager.query_index(
                 index_path=INDEX_DIR,
                 query=enriched_question,
                 k=RETRIEVER_K_DOCUMENTS,
                 use_cpu=False,
-                db_name="Products DB"
+                db_name="Products DB",
+                filter_products=products_to_focus
             )
             
             print(f"[CHAIN] Product context retrieval complete - got {len(product_docs)} documents")
@@ -186,7 +172,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     print(f"[CHAIN]   #{idx+1}: {source}")
                     
                     if hasattr(doc, 'metadata'):
-                        # Print key metadata fields for debugging
                         metadata_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items() 
                                                if k in ['product', 'tag', 'source', 'title', 'type'] and v])
                         if metadata_str:
@@ -276,7 +261,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
             
             print(f"[CHAIN] Generating initial answer with LLM...")
             
-            # Log context information
             initial_context_info = {
                 "product_doc": product_doc_source if product_docs else None,
                 "customer_doc": customer_doc_source if has_customer_docs and len(customer_docs) > 0 else None,
@@ -296,7 +280,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     print(f"[CHAIN] Formatting initial prompt...")
                     formatted_prompt = future.result(timeout=10)
                     
-                    # Store initial prompt information
                     initial_prompt_data = {
                         "step_type": "PROMPT",
                         "context_info": initial_context_info,
@@ -316,7 +299,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     
                     print(f"[CHAIN] ✅ Initial answer generated in {llm_time:.2f}s ({len(current_answer)} chars)")
                     
-                    # Add response to prompt data
                     initial_prompt_data["raw_response"] = current_answer
                     initial_prompt_data["processing_time"] = llm_time
                     chain_log_data.append(initial_prompt_data)
@@ -332,7 +314,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     initial_prompt_vars["context_str"] = initial_context
                     formatted_prompt = QUESTION_PROMPT.format(**initial_prompt_vars)
                     
-                    # Create a fallback prompt data entry
                     fallback_prompt_data = {
                         "step_type": "PROMPT_FALLBACK",
                         "context_info": {
@@ -357,7 +338,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     
                     print(f"[CHAIN] ✅ Initial answer generated with fallback in {llm_time:.2f}s ({len(current_answer)} chars)")
                     
-                    # Update fallback prompt data
                     fallback_prompt_data["raw_response"] = current_answer
                     fallback_prompt_data["processing_time"] = llm_time
             
@@ -366,7 +346,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 current_parsed = json.loads(current_answer)
                 print(f"[CHAIN] ✅ Successfully parsed initial answer as JSON")
                 
-                # Add parsed answer to prompt data
                 if chain_log_data:
                     chain_log_data[-1]["parsed_answer"] = current_parsed
             except json.JSONDecodeError:
@@ -382,7 +361,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 else:
                     print(f"[CHAIN] ✅ Fallback extraction succeeded")
                 
-                # Update parsed answer in prompt data
                 if chain_log_data:
                     chain_log_data[-1]["parsed_answer"] = current_parsed
             
@@ -468,7 +446,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 if doc_info["truncated"]:
                     print(f"[CHAIN] ⚠️ Context was truncated to fit size limits")
                 
-                # Log context information for this refinement step
                 refine_context_info = {
                     "product_doc": doc_info["product_source"] if doc_info["has_product"] else None,
                     "customer_doc": doc_info["customer_source"] if doc_info["has_customer"] else None,
@@ -489,7 +466,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                 print(f"[CHAIN] Formatting refinement prompt...")
                 formatted_refine_prompt = REFINE_PROMPT.format(**refine_prompt_vars)
                 
-                # Create refine step data structure
                 refine_step_data = {
                     "step_type": "REFINE",
                     "step_number": refine_steps,
@@ -512,7 +488,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                         
                         print(f"[CHAIN] ✅ Refinement generated in {llm_time:.2f}s ({len(refined_answer)} chars)")
                         
-                        # Add response to refine step data
                         refine_step_data["raw_response"] = refined_answer
                         refine_step_data["processing_time"] = llm_time
                         
@@ -521,7 +496,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                             refined_parsed = json.loads(refined_answer)
                             print(f"[CHAIN] ✅ Successfully parsed refined answer as JSON")
                             
-                            # Add parsed answer to refine step data
                             refine_step_data["parsed_answer"] = refined_parsed
                             
                             prev_compliance = current_parsed.get('compliance', 'Unknown')
@@ -529,7 +503,6 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                             if prev_compliance != new_compliance:
                                 print(f"[CHAIN] 📊 Compliance changed: {prev_compliance} -> {new_compliance}")
                             
-                            # Update current parsed answer for next iteration
                             current_parsed = refined_parsed
                         except json.JSONDecodeError:
                             print(f"[CHAIN] ⚠️ Failed to parse as JSON, trying fallback extraction...")
@@ -542,13 +515,12 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                                 print(f"[CHAIN] ⚠️ Fallback extraction failed, keeping previous answer")
                                 refine_step_data["parsed_answer"] = "Failed to parse"
                         
-                        # Add this refine step to chain log data
                         chain_log_data.append(refine_step_data)
                                 
                     except concurrent.futures.TimeoutError:
                         print(f"[CHAIN] ⚠️ Refinement step {refine_steps} timed out! Skipping this document...")
                         refine_step_data["error"] = "Timeout"
-                        refine_step_data["processing_time"] = 60.0  # Timeout value
+                        refine_step_data["processing_time"] = 60.0
                         chain_log_data.append(refine_step_data)
                         continue
             
@@ -589,21 +561,18 @@ def process_questions(records, qa_chain, output_columns, sheet_handler, selected
                     "references": []
                 }
             
-            # ADDED: Validate and filter references
             print(f"[CHAIN] Validating references...")
             original_ref_count = len(parsed.get('references', []))
             
-            # Process references (validate and limit to MAX_LINKS_PROVIDED)
             parsed = process_references(parsed)
             
-            # Get the filtered reference count after validation
             filtered_ref_count = len(parsed.get('references', []))
             
             print(f"[CHAIN] References: {filtered_ref_count} valid out of {original_ref_count} total (limited to {MAX_LINKS_PROVIDED} max)")
             
             answer = clean_json_answer(parsed.get("answer", ""))
             compliance = validate_compliance_value(parsed.get("compliance", "PC"))
-            references = parsed.get("references", [])  # These are now validated references
+            references = parsed.get("references", [])
             
             print(f"[RESULT] Extracted answer length: {len(answer)}")
             print(f"[RESULT] Compliance: {compliance}")

@@ -79,7 +79,8 @@ class EmbeddingManager:
         return self.current_embeddings
     
     def query_index(self, index_path: str, query: str, k: int = 4, 
-                   use_cpu: bool = False, db_name: str = "Vector DB") -> List[Document]:
+                   use_cpu: bool = False, db_name: str = "Vector DB",
+                   filter_products: List[str] = None) -> List[Document]:
         print(f"\n{'='*30} {db_name} Query {'='*30}")
         print(f"📊 Executing full query cycle for {db_name}")
         
@@ -104,7 +105,38 @@ class EmbeddingManager:
             print(f"🔄 STEP 3: Querying {db_name} for top {k} documents")
             logger.info(f"Querying index with k={k}")
             query_start = time.time()
-            docs = index.similarity_search(query, k=k)
+            
+            if filter_products and len(filter_products) > 0:
+                print(f"🔍 Applying product filter: {', '.join(filter_products)}")
+                logger.info(f"Applying product filter: {', '.join(filter_products)}")
+                
+                docs_with_scores = index.similarity_search_with_score(query, k=k*5)
+                
+                filtered_docs = []
+                for doc, score in docs_with_scores:
+                    product = None
+                    if hasattr(doc, 'metadata'):
+                        if 'product' in doc.metadata:
+                            product = doc.metadata.get('product', '')
+                        elif 'tag' in doc.metadata:
+                            product = doc.metadata.get('tag', '').replace('_', ' ')
+                    
+                    if product:
+                        for filter_product in filter_products:
+                            if (filter_product.lower() in product.lower() or
+                                product.lower() in filter_product.lower()):
+                                filtered_docs.append((doc, score))
+                                break
+                
+                filtered_docs = sorted(filtered_docs, key=lambda x: x[1])[:k]
+                docs = [doc for doc, _ in filtered_docs]
+                
+                if len(docs) < k:
+                    print(f"⚠️ Warning: Found only {len(docs)}/{k} documents matching product filter")
+                    logger.warning(f"Found only {len(docs)}/{k} documents matching product filter")
+            else:
+                docs = index.similarity_search(query, k=k)
+            
             query_time = time.time() - query_start
             print(f"✅ Retrieved {len(docs)} documents in {query_time:.2f} seconds")
             
