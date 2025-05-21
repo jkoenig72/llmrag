@@ -150,6 +150,7 @@ class GoogleSheetHandler:
                 print(f"Using specific sheet: {specific_sheet_name}")
             except gspread.exceptions.WorksheetNotFound:
                 logger.warning(f"Sheet {specific_sheet_name} not found. Using the first sheet.")
+                print(f"Sheet {specific_sheet_name} not found. Using the first sheet.")
                 self.sheet = self.spreadsheet.sheet1
         else:
             self.sheet = self.spreadsheet.sheet1
@@ -191,6 +192,7 @@ class GoogleSheetHandler:
                     break
 
             if roles_row_idx is None:
+                logger.error("Could not find role marker '#answerforge#' in first column")
                 raise ValueError("Could not find role marker '#answerforge#' in first column")
 
             headers = all_values[0]
@@ -202,6 +204,7 @@ class GoogleSheetHandler:
                     roles.setdefault(role_clean, []).append(col_idx + 1)
             
             rows = all_values[roles_row_idx + 1:]
+            logger.info(f"Loaded {len(rows)} rows from sheet")
             return headers, roles, rows, sheet
             
         except APIError as e:
@@ -230,8 +233,10 @@ class GoogleSheetHandler:
         """
         try:
             if not updates:
+                logger.info("No updates to process")
                 return
 
+            logger.info(f"Processing {len(updates)} cell updates")
             for update in updates:
                 row, col, value = update["row"], update["col"], update["value"]
                 cell = gspread.utils.rowcol_to_a1(row, col)
@@ -250,7 +255,7 @@ class GoogleSheetHandler:
                 logger.warning(f"Google API quota exceeded, will retry in {self.config.google_api_retry_delay} seconds...")
             raise
         except Exception as e:
-            logger.error(f"Error in update_batch: {e}")
+            logger.error(f"Error updating batch: {str(e)}")
             raise
 
     def update_cleaned_records(self, records: List[Dict[str, Any]], roles: Dict[str, List[int]], 
@@ -260,53 +265,36 @@ class GoogleSheetHandler:
         
         Args:
             records: List of record dictionaries
-            roles: Role to column mapping
+            roles: Dictionary mapping role names to column indices
             question_role: Name of question role
             context_role: Name of context role
-            throttle_delay: Delay between API calls in seconds
+            throttle_delay: Delay between API calls
         """
+        updates = []
+        
         for record in records:
-            updates = []
-            row_num = record["sheet_row"]
-            role_values = record.get("roles", {})
+            row = record["sheet_row"]
+            
+            for role in [question_role, context_role]:
+                if role in roles:
+                    for col_idx in roles[role]:
+                        cleaned_key = f"cleaned_{role}_{col_idx}"
+                        if cleaned_key in record["roles"]:
+                            updates.append({
+                                "row": row,
+                                "col": col_idx,
+                                "value": record["roles"][cleaned_key]
+                            })
+        
+        if updates:
+            logger.info(f"Updating {len(updates)} cleaned records")
+            self.update_batch(updates)
+        else:
+            logger.info("No cleaned records to update")
 
-            for role_key, col_indices in roles.items():
-                if role_key not in (question_role, context_role):
-                    continue
-
-                for col_idx in col_indices:
-                    cleaned = role_values.get(f"cleaned_{role_key}_{col_idx}")
-                    if cleaned is None:
-                        continue
-
-                    cell_range = gspread.utils.rowcol_to_a1(row_num, col_idx)
-                    
-                    @retry(
-                        stop=stop_after_attempt(self.config.google_api_max_retries),
-                        wait=wait_exponential(multiplier=1, min=self.config.google_api_retry_delay, max=60),
-                        retry=retry_if_exception_type(APIError),
-                        reraise=True
-                    )
-                    def get_cell_value():
-                        return self.sheet.acell(cell_range, value_render_option='UNFORMATTED_VALUE').value or ""
-                    
-                    original = get_cell_value()
-
-                    if cleaned.strip() == original.strip():
-                        continue
-
-                    updates.append({"row": row_num, "col": col_idx, "value": cleaned})
-
-            if updates:
-                self.update_batch(updates)
-                logger.info(f"Updated row {row_num}: {len(updates)} cell(s).")
-                time.sleep(throttle_delay)
-    
     def parse_records(self, headers: List[str], roles: Dict[str, List[int]], rows: List[List[str]]) -> List[Dict[str, Any]]:
         """
-        Parse raw sheet data into structured records.
-        
-        Delegates to SheetRecordProcessor.
+        Parse records from the Google Sheet.
         
         Args:
             headers: List of column headers
@@ -316,14 +304,13 @@ class GoogleSheetHandler:
         Returns:
             List of record dictionaries
         """
-        return SheetRecordProcessor.parse_records(headers, roles, rows)
-    
+        logger.info(f"Parsing {len(rows)} records")
+        return self.record_processor.parse_records(headers, roles, rows)
+
     def find_output_columns(self, roles: Dict[str, List[int]], answer_role: str, 
                           compliance_role: str, references_role: Optional[str] = None) -> Dict[str, int]:
         """
-        Find output columns based on role names.
-        
-        Delegates to SheetRecordProcessor.
+        Find output columns in the Google Sheet.
         
         Args:
             roles: Dictionary mapping role names to column indices
@@ -334,4 +321,5 @@ class GoogleSheetHandler:
         Returns:
             Dictionary mapping role names to column indices
         """
-        return SheetRecordProcessor.find_output_columns(roles, answer_role, compliance_role, references_role)
+        logger.info("Finding output columns")
+        return self.record_processor.find_output_columns(roles, answer_role, compliance_role, references_role)

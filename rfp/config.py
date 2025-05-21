@@ -12,6 +12,38 @@ class ConfigManager:
     This class handles loading of configuration from environment variables
     with fallbacks to default values. It provides validation and convenient
     access to configuration values through properties.
+    
+    Configuration Categories:
+    1. Google API Configuration
+       - Sheet IDs and credentials for Google Sheets integration
+       - API retry settings for handling rate limits
+    
+    2. Directory Paths
+       - Base directories for documents, indices, and logs
+       - Customer-specific document storage
+    
+    3. LLM Configuration
+       - Model selection and provider settings
+       - API endpoints and connection details
+    
+    4. Processing Configuration
+       - Batch sizes and throttling
+       - Text processing limits
+       - Workflow control settings
+    
+    Example:
+        ```python
+        # Using default configuration
+        config = ConfigManager()
+        
+        # Using custom environment file
+        config = ConfigManager(env_file="custom.env")
+        
+        # Accessing configuration values
+        sheet_id = config.google_sheet_id
+        base_dir = config.base_dir
+        model = config.llm_model
+        ```
     """
     
     def __init__(self, env_file: Optional[str] = None):
@@ -20,6 +52,17 @@ class ConfigManager:
         
         Args:
             env_file: Optional path to an environment file (.env)
+                     If provided, configuration will be loaded from this file
+                     before falling back to environment variables and defaults.
+        
+        Example:
+            ```python
+            # Load from default locations
+            config = ConfigManager()
+            
+            # Load from custom .env file
+            config = ConfigManager(env_file="/path/to/custom.env")
+            ```
         """
         # Load environment variables from file if provided
         if env_file and os.path.exists(env_file):
@@ -51,7 +94,55 @@ class ConfigManager:
                 os.environ[key.strip()] = value.strip()
     
     def _initialize_config(self) -> None:
-        """Initialize all configuration properties from environment variables or defaults."""
+        """
+        Initialize all configuration properties from environment variables or defaults.
+        
+        This method sets up all configuration values in the following order:
+        1. Environment variables (if set)
+        2. Default values (if no environment variable)
+        
+        Configuration Sections:
+        
+        Google API Configuration:
+        - GOOGLE_SHEET_ID: ID of the Google Sheet for RFP data
+        - GOOGLE_CREDENTIALS_FILE: Path to Google API credentials
+        - GOOGLE_API_MAX_RETRIES: Number of retries for API calls
+        - GOOGLE_API_RETRY_DELAY: Delay between retries in seconds
+        
+        Directory Paths:
+        - BASE_DIR: Root directory for the application
+        - INDEX_DIR: Directory for vector indices
+        - RFP_DOCUMENTS_DIR: Directory for RFP documents
+        - CUSTOMER_INDEX_DIR: Directory for customer-specific indices
+        
+        LLM Configuration:
+        - LLM_PROVIDER: Provider for language model (e.g., "llamacpp", "ollama")
+        - LLM_MODEL: Model name to use
+        - OLLAMA_BASE_URL: Base URL for Ollama API
+        - LLAMA_CPP_BASE_URL: Base URL for llama.cpp server
+        - EMBEDDING_MODEL: Model for document embeddings
+        
+        Processing Configuration:
+        - RETRIEVER_K_DOCUMENTS: Number of documents to retrieve
+        - CUSTOMER_RETRIEVER_K_DOCUMENTS: Number of customer documents to retrieve
+        - BATCH_SIZE: Size of processing batches
+        - API_THROTTLE_DELAY: Delay between API calls
+        - MAX_WORDS_BEFORE_SUMMARY: Word limit before summarization
+        - MAX_LINKS_PROVIDED: Maximum number of reference links
+        
+        Example:
+            ```python
+            # Environment variables
+            export GOOGLE_SHEET_ID="your-sheet-id"
+            export LLM_PROVIDER="ollama"
+            export LLM_MODEL="mistral"
+            
+            # Initialize config
+            config = ConfigManager()
+            print(f"Using model: {config.llm_model}")
+            print(f"Sheet ID: {config.google_sheet_id}")
+            ```
+        """
         # Google API Configuration
         self._google_sheet_id = os.getenv("GOOGLE_SHEET_ID", "10-0PcsDFUvT2WPGaK91UYsA0zxqOwjjrs3J6g39SYD0")
         self._google_credentials_file = os.getenv("GOOGLE_CREDENTIALS_FILE", os.path.expanduser("~/llms-env/credentials.json"))
@@ -72,7 +163,7 @@ class ConfigManager:
         self._embedding_model = os.getenv("EMBEDDING_MODEL", "intfloat/e5-large-v2")
         
         # Retrieval Configuration
-        self._retriever_k_documents = int(os.getenv("RETRIEVER_K_DOCUMENTS", "4"))
+        self._retriever_k_documents = int(os.getenv("RETRIEVER_K_DOCUMENTS", "2"))
         self._customer_retriever_k_documents = int(os.getenv("CUSTOMER_RETRIEVER_K_DOCUMENTS", "2"))
         
         # Processing Configuration

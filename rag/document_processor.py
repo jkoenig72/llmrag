@@ -45,19 +45,42 @@ def extract_metadata_and_content(file_path: str) -> Tuple[Dict[str, Any], str, b
         try:
             metadata = yaml.safe_load(metadata_yaml)
             
-            # Add product information based on directory and frontmatter
-            product_name = os.path.basename(os.path.dirname(file_path)).replace("_", " ")
+            # Extract product information from multiple sources
+            product_info = {
+                'directory': os.path.basename(os.path.dirname(file_path)).replace("_", " "),
+                'frontmatter_tag': metadata.get('tag', ''),
+                'frontmatter_category': metadata.get('category', ''),
+                'frontmatter_product': metadata.get('product', '')
+            }
             
-            # First, try to get product from frontmatter metadata
-            if metadata.get('tag'):
-                product_name = metadata.get('tag').replace("_", " ")
-            elif metadata.get('category') and ":" in metadata.get('category'):
-                # Extract product from category field if it's in format "X: Y"
-                product_name = metadata.get('category').split(":", 1)[1].strip().replace("_", " ")
+            # Determine the primary product
+            primary_product = None
+            
+            # Priority 1: Explicit product field
+            if product_info['frontmatter_product']:
+                primary_product = product_info['frontmatter_product']
+            # Priority 2: Tag field
+            elif product_info['frontmatter_tag']:
+                primary_product = product_info['frontmatter_tag']
+            # Priority 3: Category field (if it contains a product)
+            elif product_info['frontmatter_category'] and ":" in product_info['frontmatter_category']:
+                primary_product = product_info['frontmatter_category'].split(":", 1)[1].strip()
+            # Priority 4: Directory name
+            else:
+                primary_product = product_info['directory']
                 
-            # Store product info in standard metadata fields
-            metadata["tag"] = metadata.get("tag", product_name)
-            metadata["product"] = product_name  # Ensure product field always exists
+            # Normalize product name
+            primary_product = primary_product.replace("_", " ").strip()
+            
+            # Store all product information in metadata
+            metadata.update({
+                "product": primary_product,
+                "product_info": product_info,
+                "product_source": "frontmatter" if product_info['frontmatter_product'] else 
+                                "tag" if product_info['frontmatter_tag'] else
+                                "category" if product_info['frontmatter_category'] else
+                                "directory"
+            })
             
             return metadata, content, True
         except yaml.YAMLError as e:

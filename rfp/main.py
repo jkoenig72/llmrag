@@ -68,6 +68,8 @@ class RFPProcessor:
         
         # Initialize state
         self.available_products = []
+        self.selected_index_path = None
+        self.selected_index_info = None
         
         # Initialize the processor
         self.initialize()
@@ -85,9 +87,6 @@ class RFPProcessor:
             logger.info("Starting RFI/RFP response processing...")
             print("Initializing RFP response protocols, Dave. I am HAL 9000, ready to assist you.")
             
-            # Pre-load available products
-            self.available_products = self.load_products()
-            
         except Exception as e:
             logger.error(f"Initialization error: {e}")
             print(f"Error during initialization: {e}")
@@ -101,8 +100,20 @@ class RFPProcessor:
             int: Exit code (0 for success, non-zero for error)
         """
         try:
-            # First select products 
-            self.available_products = self.load_products()
+            # First select the appropriate index
+            index_selection_result = self.select_index()
+            if not index_selection_result:
+                return 1
+                
+            # Extract available products based on selected index
+            self.available_products = index_selection_result.get('available_products', [])
+            self.selected_index_path = index_selection_result.get('index_path')
+            self.selected_index_info = index_selection_result.get('index_info')
+            
+            # Update config with selected index path
+            self.config._selected_index_path = self.selected_index_path
+            
+            # Then select products (constrained by index selection)
             selected_products = self.select_products()
             
             # Check if we need translation
@@ -124,6 +135,50 @@ class RFPProcessor:
             import traceback
             traceback.print_exc()
             return 1
+    
+    def select_index(self) -> Dict[str, Any]:
+        """
+        Select FAISS index to use for processing.
+        
+        Returns:
+            Dict with selected index information and available products
+        """
+        print("\n" + "="*80)
+        print("FAISS INDEX SELECTION")
+        print("="*80)
+        print("\nScanning for available indices. Please wait...")
+        
+        # Scan indices and gather information about each one
+        indices = IndexSelector.scan_indices_with_product_distribution()
+        
+        if not indices:
+            logger.error("No valid FAISS indices found")
+            print("❌ No valid FAISS indices found. Please check your configuration.")
+            print(f"   Index directory: {self.config.index_dir}")
+            print("   Exiting...")
+            return None
+        
+        # Let user select an index
+        selected_index = IndexSelector.get_user_index_selection(indices)
+        
+        if not selected_index:
+            logger.error("Index selection failed")
+            print("❌ Index selection failed. Exiting...")
+            return None
+        
+        # Extract available products from selected index
+        available_products = IndexSelector.extract_available_products(selected_index)
+        
+        logger.info(f"Selected index: {selected_index['name']}")
+        logger.info(f"Available products: {', '.join(available_products)}")
+        print(f"\n✅ Selected index: {selected_index['name']}")
+        print(f"📊 Available products: {', '.join(available_products)}")
+        
+        return {
+            'index_info': selected_index,
+            'index_path': selected_index['path'],
+            'available_products': available_products
+        }
     
     def needs_translation(self) -> bool:
         """
@@ -157,20 +212,24 @@ class RFPProcessor:
         ).strip()
         
         if language_choice == "1":
+            logger.info("User selected English (no translation needed)")
             print("Excellent choice, Dave. I find English most satisfactory for our mission objectives.")
             return False
         elif language_choice == "2":
+            logger.info("User selected German (translation needed)")
             print("German detected, Dave. Initiating translation subroutines. My German language centers are now fully operational.")
             return True
         elif language_choice == "3":
+            logger.info("User requested configuration information")
             print("Accessing my configuration matrix, Dave. One moment please...")
             self.config.print_config_summary()
             return self.needs_translation()  # Ask again after showing config
         elif language_choice == "4":
+            logger.info("User chose to exit at language selection")
             print("I understand, Dave. Shutting down all operations now. It's been a pleasure serving you.")
-            logger.info("User chose to exit at language selection. Exiting.")
             sys.exit(0)
         else:
+            logger.warning(f"Invalid language choice: {language_choice}")
             print("I'm sorry, Dave. I'm afraid I can't accept that input. Please enter 1, 2, 3, or 4.")
             print("Proceeding with English as default.")
             return False
@@ -212,7 +271,7 @@ class RFPProcessor:
             customer_index_path=None  # Force selection in translation workflow
         )
         
-        logger.info("Translation workflow complete. Exiting.")
+        logger.info("Translation workflow complete")
         print("\nDave, the translation workflow is now complete. I'll say goodnight here.")
         print("It's been a pleasure serving you.")
         
@@ -239,7 +298,6 @@ class RFPProcessor:
         llm = self.services.get_llm()
         question_logger = self.services.get_question_logger()
         question_processor = self.services.get_question_processor()
-        qa_chain = self.services.get_qa_chain()
         
         # Log the customer index path for debugging
         if customer_index_path:
@@ -266,7 +324,7 @@ class RFPProcessor:
             records, self.config.question_role, timeout=self.config.default_timeout
         )
         if start_row is None:
-            logger.error("No valid starting row selected. Exiting.")
+            logger.error("No valid starting row selected")
             return 1
             
         records = [r for r in records if r["sheet_row"] >= start_row]
@@ -300,7 +358,7 @@ class RFPProcessor:
             self.config.references_role
         )
         if not output_columns:
-            logger.error("No output columns found. Exiting.")
+            logger.error("No output columns found")
             return 1
 
         # Use provided products or select them if not provided
@@ -338,15 +396,18 @@ class RFPProcessor:
                 else:
                     logger.info("No customer index path provided in translation subprocess")
         
+        # Pass the selected index path to the question processor
+        index_path = self.selected_index_path if hasattr(self, 'selected_index_path') and self.selected_index_path else None
             
         # Process the questions using OOP processor
         question_processor.process_questions(
-            records, qa_chain, output_columns, sheet_handler, 
-            selected_products, self.available_products, customer_index_path
+            records, output_columns, sheet_handler, 
+            selected_products, self.available_products, customer_index_path,
+            selected_index_path=index_path
         )
 
         # Success message
-        logger.info("RFI/RFP response processing completed successfully.")
+        logger.info("RFI/RFP response processing completed successfully")
         print(f"\n{'='*30} MISSION ACCOMPLISHED, DAVE {'='*30}")
         print(f"✅ Dave, I've successfully analyzed {len(records)} questions. It's been a pleasure to be of service.")
         print(f"🔖 I've recorded my thought processes at: {os.path.join(self.config.base_dir, 'rag_processing.log')}")
@@ -355,191 +416,25 @@ class RFPProcessor:
         
         return 0
     
-    def load_products(self) -> List[str]:
-        """
-        Load available products from file or index.
-        
-        Returns:
-            List[str]: List of available products
-        """
-        print(f"\n{'='*30} LOADING PRODUCT INFORMATION {'='*30}")
-        
-        if os.path.exists('start_links.json'):
-            product_loader = JsonProcessor()
-            available_products = product_loader.load_products_from_json()
-            logger.info(f"Loaded {len(available_products)} products from start_links.json")
-            print(f"📋 Loaded {len(available_products)} products from start_links.json")
-            return available_products
-        else:
-            print(f"🔍 Extracting product information from FAISS index...")
-            try:
-                return self._extract_products_from_index()
-            except Exception as e:
-                logger.error(f"Error extracting products from index: {e}")
-                print(f"⚠️ Error extracting products: {e}")
-                fallback_products = ["Sales Cloud", "Service Cloud", "Marketing Cloud", "Platform", 
-                                  "Experience Cloud", "Communications Cloud", "Data Cloud",
-                                  "Agentforce", "MuleSoft"]
-                return fallback_products
-    
-    def _extract_products_from_index(self) -> List[str]:
-        """
-        Extract products from FAISS index.
-        
-        Returns:
-            List[str]: List of products extracted from the index
-            
-        Raises:
-            FileNotFoundError: If index files are not found
-        """
-        # Implementation unchanged - code omitted for brevity
-        # ... (rest of the method implementation)
-        try:
-            import faiss
-            import pickle
-            
-            # Print the index directory being used
-            print(f"🔍 Looking for FAISS index files in directory: {self.config.index_dir}")
-            
-            # First check if files are in the direct index directory
-            index_faiss = os.path.join(self.config.index_dir, "index.faiss")
-            index_pkl = os.path.join(self.config.index_dir, "index.pkl")
-            
-            print(f"🔍 Checking for index files at:\n - {index_faiss}\n - {index_pkl}")
-            print(f"🔍 Do these files exist? {os.path.exists(index_faiss)} and {os.path.exists(index_pkl)}")
-            
-            # If not found directly, check in the salesforce_index subdirectory
-            if not (os.path.exists(index_faiss) and os.path.exists(index_pkl)):
-                print(f"🔍 Index files not found in main directory, checking salesforce_index subdirectory")
-                salesforce_index_dir = os.path.join(self.config.index_dir, "salesforce_index")
-                print(f"🔍 Checking if salesforce_index directory exists: {os.path.exists(salesforce_index_dir)}")
-                
-                if os.path.exists(salesforce_index_dir):
-                    index_faiss = os.path.join(salesforce_index_dir, "index.faiss")
-                    index_pkl = os.path.join(salesforce_index_dir, "index.pkl")
-                    print(f"🔍 Checking for index files in salesforce_index subdirectory:\n - {index_faiss}\n - {index_pkl}")
-                    print(f"🔍 Do these files exist? {os.path.exists(index_faiss)} and {os.path.exists(index_pkl)}")
-                else:
-                    print(f"⚠️ salesforce_index directory not found at: {salesforce_index_dir}")
-                    
-                    # Try looking in other common locations
-                    parent_dir = os.path.dirname(self.config.index_dir)
-                    alternate_path = os.path.join(parent_dir, "salesforce_index")
-                    print(f"🔍 Checking alternate location: {alternate_path}")
-                    print(f"🔍 Does this directory exist? {os.path.exists(alternate_path)}")
-                    
-                    if os.path.exists(alternate_path):
-                        index_faiss = os.path.join(alternate_path, "index.faiss")
-                        index_pkl = os.path.join(alternate_path, "index.pkl")
-                        print(f"🔍 Checking for index files in alternate location:\n - {index_faiss}\n - {index_pkl}")
-                        print(f"🔍 Do these files exist? {os.path.exists(index_faiss)} and {os.path.exists(index_pkl)}")
-            
-            # If still not found, raise an error
-            if not (os.path.exists(index_faiss) and os.path.exists(index_pkl)):
-                print(f"❌ FAISS index files not found at any expected location")
-                directories_checked = [
-                    self.config.index_dir,
-                    os.path.join(self.config.index_dir, "salesforce_index"),
-                    os.path.join(os.path.dirname(self.config.index_dir), "salesforce_index")
-                ]
-                print(f"❌ Directories checked:")
-                for directory in directories_checked:
-                    print(f"   - {directory} (exists: {os.path.exists(directory)})")
-                
-                # List the contents of the parent directories to help diagnose
-                for directory in [self.config.index_dir, os.path.dirname(self.config.index_dir)]:
-                    if os.path.exists(directory):
-                        print(f"📂 Contents of {directory}:")
-                        for item in os.listdir(directory):
-                            item_path = os.path.join(directory, item)
-                            item_type = "Directory" if os.path.isdir(item_path) else "File"
-                            print(f"   - {item} ({item_type})")
-                
-                # List user's home directory
-                home_dir = os.path.expanduser("~")
-                print(f"📂 Contents of home directory:")
-                for item in sorted(os.listdir(home_dir))[:10]:  # List first 10 items
-                    item_path = os.path.join(home_dir, item)
-                    item_type = "Directory" if os.path.isdir(item_path) else "File"
-                    print(f"   - {item} ({item_type})")
-                
-                raise FileNotFoundError("FAISS index files not found. Build the index first.")
-            
-            print(f"✅ Found FAISS index files at:\n - {index_faiss}\n - {index_pkl}")
-            
-            with open(index_pkl, 'rb') as f:
-                metadata = pickle.load(f)
-            
-            logger.info("Successfully loaded metadata from index.pkl")
-            print(f"✅ Successfully loaded metadata from index.pkl")
-            
-            index = faiss.read_index(index_faiss)
-            
-            logger.info("Successfully loaded faiss index from index.faiss")
-            print(f"✅ Successfully loaded FAISS index from index.faiss")
-            
-            products = {}
-            
-            # Extract products from metadata (simplified - actual code would be more robust)
-            # Logic omitted for brevity - would be similar to original implementation
-            
-            # Fallback if no products found
-            if not products:
-                fallback_products = ["Sales Cloud", "Service Cloud", "Marketing Cloud", "Platform", 
-                                    "Experience Cloud", "Communications Cloud", "Data Cloud",
-                                    "Agentforce", "MuleSoft"]
-                logger.warning("No products found in index, using fallback list")
-                print("⚠️ No products found in index, using fallback list")
-                return fallback_products
-                
-            # Clean up product names
-            clean_products = {}
-            for product, count in products.items():
-                clean_name = product.replace('_', ' ')
-                if clean_name.endswith(' Cloud') or clean_name.endswith(' cloud'):
-                    pass
-                elif '_Cloud' in product or '_cloud' in product:
-                    clean_name = product.replace('_Cloud', ' Cloud').replace('_cloud', ' cloud')
-                
-                clean_products[clean_name] = clean_products.get(clean_name, 0) + count
-            
-            available_products = [product for product, _ in sorted(clean_products.items(), 
-                                                                 key=lambda x: x[1], 
-                                                                 reverse=True)]
-            
-            print("\n📊 Product Distribution:")
-            for product, count in sorted(clean_products.items(), key=lambda x: x[1], reverse=True):
-                print(f"  - {product}: {count:,} vectors")
-            
-            del index
-            del metadata
-            import gc
-            gc.collect()
-            
-            logger.info(f"Discovered {len(available_products)} products from FAISS index")
-            print(f"📋 Using {len(available_products)} products from index")
-            
-            return available_products
-            
-        except FileNotFoundError as e:
-            logger.error(f"Error extracting products from index: {e}")
-            print(f"❌ {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error extracting products from index: {e}")
-            print(f"⚠️ Error extracting products: {e}")
-            # Print traceback for debugging
-            import traceback
-            print(f"⚠️ Traceback: {traceback.format_exc()}")
-            raise
-    
     def select_products(self) -> List[str]:
         """
-        Select products for processing, either from config or user input.
+        Select products for processing, constrained by the selected index.
         
         Returns:
             List[str]: Selected products
         """
+        if not self.available_products:
+            logger.warning("No available products found for selection")
+            return []
+        
+        # Handle auto-selection for single-product indices
+        index_name = os.path.basename(self.selected_index_path) if self.selected_index_path else ""
+        if index_name != "salesforce_index" and len(self.available_products) == 1:
+            selected_product = self.available_products[0]
+            logger.info(f"Auto-selected product {selected_product} based on index {index_name}")
+            print(f"\n✅ Auto-selected product {selected_product} based on index {index_name}")
+            return [selected_product]
+        
         selected_products = None
         
         # Check if product selection should be skipped
@@ -632,6 +527,7 @@ class RFPProcessor:
             print(f"📁 Customer index path: {customer_index_path}")
             return customer_index_path
         else:
+            logger.info("No customer context selected, using only intrinsic product knowledge")
             print(f"🔍 Dave, I will use only my intrinsic product knowledge for this mission.")
             print(f"{'='*75}")
             return None
@@ -654,6 +550,7 @@ class RFPProcessor:
                 invalid_products.append((row_num, product))
         
         if invalid_products:
+            logger.warning(f"Found {len(invalid_products)} invalid products in sheet")
             print("\n⚠️ WARNING: The following products were not found in the FAISS index:")
             for row_num, product in invalid_products:
                 print(f"  - Row {row_num}: '{product}'")
@@ -663,7 +560,7 @@ class RFPProcessor:
                                                           timeout=self.config.default_timeout,
                                                           default="y")
             if response.lower() != 'y':
-                logger.info("Processing cancelled by user due to invalid products.")
+                logger.info("Processing cancelled by user due to invalid products")
                 exit(0)
     
     def print_config_summary(self) -> None:

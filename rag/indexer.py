@@ -5,6 +5,7 @@ Handles creating and updating FAISS indices with document embeddings.
 import os
 import logging
 import time
+import pickle
 from collections import defaultdict
 from typing import Tuple, Dict, Optional, Set
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -50,6 +51,9 @@ def process_markdown_files_individually(source_dir: str, index_dir: str) -> Tupl
     product_counts = utils.count_files_by_product(source_dir)
     total_files = product_counts["Total"]
     processed_count_by_product = {k: 0 for k in product_counts.keys()}
+    
+    # Track product distribution in the index
+    index_product_distribution = defaultdict(int)
     
     # Track skipped files and reasons
     skip_tracking = defaultdict(list)
@@ -111,8 +115,19 @@ def process_markdown_files_individually(source_dir: str, index_dir: str) -> Tupl
                         embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
                         index = FAISS.from_documents(split_docs, embeddings)
                     
+                    # Update product distribution tracking
+                    for doc in split_docs:
+                        if 'product' in doc.metadata:
+                            index_product_distribution[doc.metadata['product']] += 1
+                    
                     # Save index and track the processed file
                     index.save_local(index_dir)
+                    
+                    # Save product distribution information
+                    product_dist_path = os.path.join(index_dir, "product_distribution.pkl")
+                    with open(product_dist_path, 'wb') as f:
+                        pickle.dump(dict(index_product_distribution), f)
+                    
                     utils.save_processed_hash(content_hash)
                     total_new += 1
                     
@@ -142,10 +157,16 @@ def process_markdown_files_individually(source_dir: str, index_dir: str) -> Tupl
     minutes, seconds = divmod(int(total_time), 60)
     logging.info(f"⏱️ Total processing time: {minutes} minutes and {seconds} seconds")
     
+    # Log final product distribution
+    logging.info("\nFinal Product Distribution in Index:")
+    for product, count in sorted(index_product_distribution.items()):
+        logging.info(f"  {product}: {count} chunks")
+    
     # Combine all skipping info
     skip_summary = {
         "skip_reasons": skip_tracking,
-        "error_reasons": error_tracking
+        "error_reasons": error_tracking,
+        "product_distribution": dict(index_product_distribution)
     }
     
     return total_new, total_skipped, skip_summary

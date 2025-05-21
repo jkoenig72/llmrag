@@ -1,6 +1,12 @@
 import os
 import logging
-from typing import List, Optional, Dict, Any
+import time
+import faiss
+import pickle
+from typing import List, Optional, Dict, Any, Tuple
+from collections import Counter
+from tabulate import tabulate
+from datetime import datetime
 
 from config import get_config
 
@@ -114,6 +120,10 @@ class IndexSelector:
         index_name = os.path.basename(selected_index_path)
         product_str = ", ".join(selected_products) if selected_products else "None"
         
+        logger.info(f"Selected product(s): {product_str}")
+        logger.info(f"Using index: {index_name}")
+        logger.info(f"Index path: {selected_index_path}")
+        
         print(f"\n{'='*30} INDEX SELECTION {'='*30}")
         print(f"Selected product(s): {product_str}")
         
@@ -154,3 +164,348 @@ class IndexSelector:
                 return False
                 
         return True
+        
+    @staticmethod
+    def scan_indices_with_product_distribution() -> List[Dict[str, Any]]:
+        """
+        Scan available indices and analyze product distribution in each.
+        
+        Returns:
+            List of dictionaries with index information including product distribution
+        """
+        config = get_config()
+        index_dir = config.index_dir
+        available_indices = []
+        
+        if not os.path.exists(index_dir):
+            logger.error(f"Index directory does not exist: {index_dir}")
+            print(f"❌ Index directory does not exist: {index_dir}")
+            return []
+        
+        logger.info(f"Scanning FAISS indices in {index_dir}")
+        print("\n" + "="*80)
+        print("SCANNING AVAILABLE VECTOR DATABASES")
+        print("="*80)
+        
+        # Find all directories in the base directory that contain FAISS indices
+        for item in os.listdir(index_dir):
+            item_path = os.path.join(index_dir, item)
+            if os.path.isdir(item_path) and item.endswith('_index'):
+                try:
+                    logger.info(f"Analyzing index: {item}")
+                    
+                    # Basic index metadata
+                    index_info = IndexSelector._get_index_metadata(item_path)
+                    if not index_info:
+                        continue
+                    
+                    # Product distribution analysis
+                    product_distribution = IndexSelector._analyze_product_vectors(item_path)
+                    index_info['product_distribution'] = product_distribution
+                    
+                    # Display only the product distribution table
+                    print(f"\n{index_info['name'].upper()}")
+                    print("=" * len(index_info['name'].upper()))
+                    
+                    # Product distribution table
+                    print("┌" + "─" * 55 + "┐")
+                    print("│ Product".ljust(45) + "│ Vectors".ljust(10) + "│")
+                    print("├" + "─" * 45 + "┼" + "─" * 9 + "┤")
+                    
+                    if product_distribution:
+                        # Sort products by vector count (descending)
+                        sorted_products = sorted(product_distribution.items(), key=lambda x: -x[1])
+                        for product, count in sorted_products:
+                            # Convert product name back to proper case and format
+                            display_name = product.replace('_', ' ').title()
+                            print(f"│ {display_name[:43].ljust(43)} │ {str(count).rjust(8)} │")
+                    else:
+                        print("│ No product data available".ljust(55) + "│")
+                    
+                    print("└" + "─" * 45 + "┴" + "─" * 9 + "┘")
+                    
+                    available_indices.append(index_info)
+                    logger.info(f"Successfully analyzed: {item}")
+                except Exception as e:
+                    logger.error(f"Error analyzing index {item}: {e}")
+                    print(f"❌ Error analyzing index {item}: {e}")
+        
+        # Sort indices by name
+        available_indices.sort(key=lambda x: x["name"])
+        
+        return available_indices
+    
+    @staticmethod
+    def _get_index_metadata(index_path: str) -> Optional[Dict[str, Any]]:
+        """
+        Get metadata about a FAISS index.
+        
+        Args:
+            index_path: Path to the FAISS index
+            
+        Returns:
+            Dictionary containing index metadata or None if invalid
+        """
+        try:
+            # Check if index directory exists
+            if not os.path.exists(index_path):
+                logger.warning(f"Index directory does not exist: {index_path}")
+                return None
+                
+            # Get basic index information
+            index_name = os.path.basename(index_path)
+            faiss_path = os.path.join(index_path, "index.faiss")
+            pkl_path = os.path.join(index_path, "index.pkl")
+            
+            # Check if required files exist
+            if not os.path.exists(faiss_path) or not os.path.exists(pkl_path):
+                logger.warning(f"Missing required files in {index_path}")
+                return None
+                
+            # Get file size
+            size_bytes = os.path.getsize(faiss_path)
+            size_mb = size_bytes / (1024 * 1024)
+            
+            # Get last modified time
+            last_modified = os.path.getmtime(faiss_path)
+            last_modified = datetime.fromtimestamp(last_modified)
+            
+            # Try to load the index to get vector count
+            try:
+                index = faiss.read_index(faiss_path)
+                vector_count = index.ntotal
+                cpu_only = not hasattr(index, 'getDevice')
+            except Exception as e:
+                logger.warning(f"Could not read FAISS index: {e}")
+                vector_count = 0
+                cpu_only = True
+                
+            # Get product distribution
+            product_distribution = IndexSelector._analyze_product_vectors(index_path)
+            
+            return {
+                'name': index_name,
+                'path': index_path,
+                'vector_count': vector_count,
+                'size_mb': size_mb,
+                'last_modified': last_modified,
+                'cpu_only': cpu_only,
+                'product_distribution': product_distribution
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting index metadata: {e}")
+            return None
+    
+    @staticmethod
+    def _analyze_product_vectors(index_path: str) -> dict:
+        """
+        Analyze the product distribution in a FAISS index using robust logic from RAG's get_index_info.
+        Args:
+            index_path: Path to the FAISS index
+        Returns:
+            Dictionary mapping product names to vector counts
+        """
+        import pickle
+        import faiss
+        import os
+        products = {}
+        index_pkl = os.path.join(index_path, "index.pkl")
+        index_faiss = os.path.join(index_path, "index.faiss")
+        if not (os.path.exists(index_faiss) and os.path.exists(index_pkl)):
+            return {}
+        try:
+            with open(index_pkl, 'rb') as f:
+                metadata = pickle.load(f)
+            # Try multiple approaches to extract product information
+            # Approach 1: Direct access to docstore dictionary (newer format)
+            if hasattr(metadata, 'get') and metadata.get('docstore'):
+                docstore_dict = metadata.get('docstore', {}).get('_dict', {})
+                for doc_id, doc_metadata in docstore_dict.items():
+                    if hasattr(doc_metadata, 'metadata'):
+                        # Check for 'product' field
+                        if 'product' in doc_metadata.metadata:
+                            product = doc_metadata.metadata.get('product', '')
+                            if product:
+                                product = product.lower().replace(' ', '_')
+                                products[product] = products.get(product, 0) + 1
+                        # Check for 'tag' field
+                        elif 'tag' in doc_metadata.metadata:
+                            product = doc_metadata.metadata.get('tag', '')
+                            if product:
+                                product = product.lower().replace(' ', '_')
+                                products[product] = products.get(product, 0) + 1
+            # Approach 2: Handle tuple format (older or modified format)
+            elif isinstance(metadata, tuple):
+                for i, element in enumerate(metadata):
+                    if isinstance(element, dict) and 'docstore' in element:
+                        docstore = element['docstore']
+                        if hasattr(docstore, '_dict'):
+                            for doc_id, doc_metadata in docstore._dict.items():
+                                if hasattr(doc_metadata, 'metadata'):
+                                    # Check for 'product' field
+                                    if 'product' in doc_metadata.metadata:
+                                        product = doc_metadata.metadata.get('product', '')
+                                        if product:
+                                            product = product.lower().replace(' ', '_')
+                                            products[product] = products.get(product, 0) + 1
+                                    # Check for 'tag' field
+                                    elif 'tag' in doc_metadata.metadata:
+                                        product = doc_metadata.metadata.get('tag', '')
+                                        if product:
+                                            product = product.lower().replace(' ', '_')
+                                            products[product] = products.get(product, 0) + 1
+                    elif hasattr(element, '_dict'):
+                        for doc_id, doc_metadata in element._dict.items():
+                            if hasattr(doc_metadata, 'metadata'):
+                                # Check for 'product' field
+                                if 'product' in doc_metadata.metadata:
+                                    product = doc_metadata.metadata.get('product', '')
+                                    if product:
+                                        product = product.lower().replace(' ', '_')
+                                        products[product] = products.get(product, 0) + 1
+                                # Check for 'tag' field
+                                elif 'tag' in doc_metadata.metadata:
+                                    product = doc_metadata.metadata.get('tag', '')
+                                    if product:
+                                        product = product.lower().replace(' ', '_')
+                                        products[product] = products.get(product, 0) + 1
+            return products
+        except Exception as e:
+            import logging
+            logging.warning(f"Could not extract product distribution: {e}")
+            return {}
+    
+    @staticmethod
+    def display_index_information(indices: List[Dict[str, Any]]) -> None:
+        """
+        Display information about available indices in a formatted table.
+        
+        Args:
+            indices: List of index information dictionaries
+        """
+        if not indices:
+            print("No indices found.")
+            return
+            
+        print("\n" + "="*100)
+        print("DETAILED INDEX INFORMATION")
+        print("="*100)
+        
+        # Sort indices to show salesforce_index first
+        sorted_indices = sorted(indices, key=lambda x: x['name'] != 'salesforce_index')
+        
+        for idx in sorted_indices:
+            print(f"\n{idx['name'].upper()}")
+            print("=" * len(idx['name'].upper()))
+            
+            # Basic index information
+            print(f"\nLocation: {idx['path']}")
+            print(f"Total Vectors: {idx.get('vector_count', 0):,}")
+            print(f"Size: {idx.get('size_mb', 0):.2f} MB")
+            print(f"Last Modified: {idx.get('last_modified', '').strftime('%Y-%m-%d %H:%M')}")
+            print(f"CPU Only: {'Yes' if idx.get('cpu_only', False) else 'No'}")
+            
+            # Product distribution
+            print("\nProduct Distribution Analysis:")
+            print("-" * 80)
+            
+            analysis = idx.get('product_distribution', {})
+            if analysis and 'product_counts' in analysis:
+                # Sort products by vector count
+                sorted_products = sorted(
+                    analysis['product_counts'].items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                
+                # Print header
+                print(f"{'Product':<25} {'Vectors':>10} {'% of Total':>10} {'% of Docs':>10}")
+                print("-" * 80)
+                
+                # Print each product's statistics
+                total_vectors = analysis['total_vectors']
+                total_docs = analysis['metadata_stats']['total_documents']
+                
+                for product, count in sorted_products:
+                    vector_percentage = (count / total_vectors * 100) if total_vectors > 0 else 0
+                    doc_percentage = (count / total_docs * 100) if total_docs > 0 else 0
+                    print(f"{product:<25} {count:>10,} {vector_percentage:>9.1f}% {doc_percentage:>9.1f}%")
+                
+                # Print summary statistics
+                print("\nSummary Statistics:")
+                print(f"Total Documents: {analysis['metadata_stats']['total_documents']:,}")
+                print(f"Documents with Product Info: {analysis['metadata_stats']['documents_with_product']:,}")
+                print(f"Unique Products: {len(analysis['metadata_stats']['unique_products'])}")
+                print(f"Products: {', '.join(sorted(analysis['metadata_stats']['unique_products']))}")
+            else:
+                print("No product distribution information available")
+            
+            print("\n" + "="*100)
+    
+    @staticmethod
+    def get_user_index_selection(indices: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Get user selection of an index from the available indices.
+        
+        Args:
+            indices: List of index information dictionaries
+            
+        Returns:
+            Selected index information dictionary or None if selection failed
+        """
+        if not indices:
+            logger.error("No indices available for selection")
+            return None
+            
+        print("\nPlease select an index to use:")
+        for i, idx in enumerate(indices, 1):
+            print(f"{i}. {idx['name']} ({idx['vector_count']} vectors, {idx['size_mb']} MB)")
+            
+        while True:
+            try:
+                choice = input("\nEnter the number of your choice: ").strip()
+                if not choice:
+                    logger.warning("No selection made")
+                    return None
+                    
+                index_num = int(choice)
+                if 1 <= index_num <= len(indices):
+                    selected = indices[index_num - 1]
+                    logger.info(f"User selected index: {selected['name']}")
+                    return selected
+                else:
+                    print(f"Please enter a number between 1 and {len(indices)}")
+            except ValueError:
+                print("Please enter a valid number")
+            except Exception as e:
+                logger.error(f"Error during index selection: {e}")
+                return None
+    
+    @staticmethod
+    def extract_available_products(index: Dict[str, Any]) -> List[str]:
+        """
+        Extract list of available products from an index.
+        
+        Args:
+            index: Index information dictionary
+            
+        Returns:
+            List of product names
+        """
+        if not index or 'product_distribution' not in index:
+            logger.warning("No product distribution information in index")
+            return []
+            
+        # Get raw product names
+        raw_products = list(index['product_distribution'].keys())
+        
+        # Format product names properly
+        formatted_products = []
+        for product in raw_products:
+            # Convert from snake_case to Title Case with spaces
+            formatted = product.replace('_', ' ').title()
+            formatted_products.append(formatted)
+        
+        logger.info(f"Extracted {len(formatted_products)} products from index {index['name']}")
+        return formatted_products

@@ -1,8 +1,10 @@
+import logging
 from config import get_config
 from langchain.prompts import PromptTemplate
 
 # Get configuration
 config = get_config()
+logger = logging.getLogger(__name__)
 
 class PromptManager:
     """
@@ -139,16 +141,19 @@ Refined Answer (JSON only):
     @classmethod
     def get_summary_prompt(cls):
         """Get the summary prompt template."""
+        logger.debug("Retrieving summary prompt template")
         return cls.SUMMARY_PROMPT
     
     @classmethod
     def get_question_prompt(cls):
         """Get the question prompt template."""
+        logger.debug("Retrieving question prompt template")
         return cls.QUESTION_PROMPT
     
     @classmethod
     def get_refine_prompt(cls):
         """Get the refinement prompt template."""
+        logger.debug("Retrieving refinement prompt template")
         return cls.REFINE_PROMPT
     
     @classmethod
@@ -162,6 +167,7 @@ Refined Answer (JSON only):
         Returns:
             Formatted prompt
         """
+        logger.debug("Formatting summary prompt with text length: %d", len(text))
         return cls.SUMMARY_PROMPT.format(text=text, MAX_WORDS_BEFORE_SUMMARY=config.max_words_before_summary)
     
     @classmethod
@@ -177,6 +183,8 @@ Refined Answer (JSON only):
         Returns:
             Formatted prompt
         """
+        logger.debug("Formatting question prompt with context length: %d, question: %s, product_focus: %s", 
+                    len(context_str), question, product_focus)
         return cls.QUESTION_PROMPT.format(
             context_str=context_str,
             question=question,
@@ -197,6 +205,8 @@ Refined Answer (JSON only):
         Returns:
             Formatted prompt
         """
+        logger.debug("Formatting refinement prompt with question: %s, context length: %d, product_focus: %s",
+                    question, len(context_str), product_focus)
         return cls.REFINE_PROMPT.format(
             question=question,
             existing_answer=existing_answer,

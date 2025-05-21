@@ -65,11 +65,14 @@ class TextProcessor:
                     cleaned_text = cls.clean_text(text)
                     record["roles"][role] = cleaned_text
 
+                    logger.info(f"Cleaning text for role: {role} in row: {record['sheet_row']}")
+                    logger.debug(f"Before cleaning: {original_text}")
+                    logger.debug(f"After cleaning: {cleaned_text}")
                     print(f"Before cleaning (Row {record['sheet_row']}, Role: {role}):\n{original_text}")
                     print(f"After cleaning (Row {record['sheet_row']}, Role: {role}):\n{cleaned_text}")
 
                     if cleaned_text != original_text:
-                        logger.info(f"Cleaned text for role: {role} in row: {record['sheet_row']}")
+                        logger.info(f"Text was modified for role: {role} in row: {record['sheet_row']}")
                         time.sleep(api_throttle_delay)
     
     @staticmethod
@@ -86,6 +89,7 @@ class TextProcessor:
             Summarized text
         """
         formatted_prompt = summary_prompt.format(text=text)
+        logger.debug("Generated summary prompt:\n%s", formatted_prompt)
         print("\n--- Prompt Sent to LLM ---\n", formatted_prompt, "\n-------------------------\n")
         result = llm.invoke(formatted_prompt)
         return result.strip()
@@ -113,11 +117,14 @@ class TextProcessor:
                     
                 if len(text.split()) > word_limit:
                     try:
+                        logger.info(f"Summarizing text for role '{role}' in row {record['sheet_row']}")
+                        logger.debug(f"Original text: {text}")
                         print(f"\n[SUMMARY] Row {record['sheet_row']}, Role: {role}\nBefore:\n{text}\n")
                         summary = cls.generate_summary(text, llm, summary_prompt)
+                        logger.debug(f"Generated summary: {summary}")
                         print(f"After:\n{summary}\n")
                         record["roles"][role] = summary
-                        logger.info(f"Text for role '{role}' was summarized.")
+                        logger.info(f"Successfully summarized text for role '{role}'")
                     except Exception as e:
                         logger.error(f"Failed to generate summary for text in role '{role}': {e}")
     
@@ -138,6 +145,9 @@ class TextProcessor:
             return text
             
         if preserve_words:
-            return text[:max_length].rsplit(' ', 1)[0] + '...'
+            truncated = text[:max_length].rsplit(' ', 1)[0] + '...'
         else:
-            return text[:max_length] + '...'
+            truncated = text[:max_length] + '...'
+            
+        logger.debug(f"Truncated text from {len(text)} to {len(truncated)} characters")
+        return truncated

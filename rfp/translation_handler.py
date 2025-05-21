@@ -40,8 +40,10 @@ class TranslationHandler:
         
         try:
             existing_sheet = spreadsheet.worksheet(english_sheet_name)
+            logger.info(f"Found existing English sheet: {english_sheet_name}")
             return True, existing_sheet
         except gspread.exceptions.WorksheetNotFound:
+            logger.info(f"No existing English sheet found: {english_sheet_name}")
             return False, None
     
     @staticmethod
@@ -65,11 +67,13 @@ class TranslationHandler:
         sheet_exists, existing_sheet = TranslationHandler.check_existing_english_sheet(sheet_handler, original_sheet_name)
         
         if sheet_exists:
+            logger.info(f"Deleting existing sheet '{english_sheet_name}' for clean slate")
             print(f"Found existing sheet '{english_sheet_name}'. Deleting for clean slate...")
             spreadsheet.del_worksheet(existing_sheet)
             time.sleep(2)
         
         original_sheet = spreadsheet.worksheet(original_sheet_name)
+        logger.info(f"Creating new sheet: '{english_sheet_name}'")
         print(f"Creating new sheet: '{english_sheet_name}'")
         
         all_values = original_sheet.get_all_values()
@@ -81,6 +85,7 @@ class TranslationHandler:
         if all_values:
             # Use the current format: update(range, values)
             english_sheet.update("A1", all_values)
+            logger.info(f"Copied {len(all_values)} rows to '{english_sheet_name}'")
             print(f"Copied {len(all_values)} rows to '{english_sheet_name}'")
         
         return english_sheet
@@ -138,6 +143,7 @@ class TranslationHandler:
         
         prompt = f"Translate this from {source_lang} to {target_lang}. Output ONLY the translation with no explanations: {text}"
         
+        logger.info(f"Translating text: {text[:50]}..." if len(text) > 50 else f"Translating text: {text}")
         print(f"Translating: {text[:50]}..." if len(text) > 50 else f"Translating: {text}")
 
         try:
@@ -178,9 +184,11 @@ class TranslationHandler:
                         translated = match.group(2).strip()
                         break
             
+            logger.info(f"Translation result: {translated[:50]}..." if len(translated) > 50 else f"Translation result: {translated}")
             print(f"Translation: {translated[:50]}..." if len(translated) > 50 else f"Translation: {translated}")
             
             if not translated:
+                logger.warning("Empty translation result, returning original text")
                 return text
                 
             return translated
@@ -198,7 +206,7 @@ class TranslationHandler:
                            source_lang: str, 
                            target_lang: str,
                            llm,
-                           start_row: int = 1) -> None:
+                           start_row: int = 3) -> None:  # Default to row 3 (skipping header and #answerforge# rows)
         """
         Translate rows from one sheet to another.
         
@@ -210,7 +218,7 @@ class TranslationHandler:
             source_lang: Source language
             target_lang: Target language
             llm: Language model instance to use for translation
-            start_row: Row to start translation from
+            start_row: Row to start translation from (default 3 to skip header and roles rows)
         """
         all_values = source_sheet.get_all_values()
         
@@ -233,6 +241,10 @@ class TranslationHandler:
         
         total_rows = len(all_values)
         
+        # Log the row we're starting from
+        logger.info(f"Starting translation from row {start_row} (skipping header and marker rows)")
+        print(f"Starting translation from row {start_row} (skipping header and marker rows)")
+        
         for row_idx, row in enumerate(all_values):
             if row_idx + 1 < start_row:
                 continue
@@ -240,6 +252,7 @@ class TranslationHandler:
             if row_idx in skip_rows:
                 continue
             
+            logger.info(f"Translating Row {row_idx+1} of {total_rows}")
             print(f"\nTranslating Row {row_idx+1} of {total_rows}...")
             
             for col_idx in columns_to_translate:
@@ -249,41 +262,25 @@ class TranslationHandler:
                 cell_value = row[col_idx]
                 if not cell_value.strip():
                     continue
-                
-                col_letter = gspread.utils.rowcol_to_a1(1, col_idx+1)[0]
-                col_name = column_names[col_idx]
-                cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
-                
-                print(f"  Column {col_letter} ({col_name}): Translating... ", end="", flush=True)
-                translated_value = TranslationHandler.translate_text(cell_value, source_lang, target_lang, llm)
-                print("Done.")
-                
-                print(f"  Updating cell {cell_a1} with translation...")
-                
-                try:
-                    # Use the safe update method
-                    TranslationHandler.safe_update_cell(target_sheet, (row_idx + 1, col_idx + 1), translated_value)
-                    print(f"  Cell {cell_a1} updated successfully.")
                     
-                    # Then try to apply formatting if possible - this might fail silently
+                column_name = column_names.get(col_idx, f"Column {col_idx+1}")
+                logger.info(f"Translating {column_name} in row {row_idx+1}")
+                
+                translated = TranslationHandler.translate_text(cell_value, source_lang, target_lang, llm)
+                
+                if translated != cell_value:
                     try:
-                        target_sheet.format(cell_a1, {
-                            "textFormat": {
-                                "bold": True
-                            }
-                        })
-                        print(f"  Applied bold formatting to cell {cell_a1}.")
-                    except Exception as formatting_error:
-                        print(f"  Note: Unable to apply bold formatting: {formatting_error}")
-                    
-                except Exception as e:
-                    print(f"  Error updating cell {cell_a1}: {e}")
+                        TranslationHandler.safe_update_cell(target_sheet, (row_idx+1, col_idx+1), translated)
+                        logger.info(f"Updated cell ({row_idx+1}, {col_idx+1}) with translation")
+                    except Exception as e:
+                        logger.error(f"Failed to update cell ({row_idx+1}, {col_idx+1}): {e}")
+                        print(f"Failed to update cell: {e}")
                 
-                time.sleep(config.api_throttle_delay)
+                # Add a small delay to avoid rate limits
+                time.sleep(0.5)
             
-            print(f"Completed translation for Row {row_idx+1}")
-            
-        print(f"\nCompleted translation of all rows from {start_row} to {total_rows}")
+            # Add a slightly longer delay between rows
+            time.sleep(1)
     
     @staticmethod
     def back_translate_sheet_rows(sheet_handler, 
@@ -293,156 +290,123 @@ class TranslationHandler:
                                 target_lang: str, 
                                 source_lang: str,
                                 llm,
-                                start_row: int = 1) -> None:
+                                start_row: int = 3) -> None:  # Default to row 3 (skipping header and #answerforge# rows)
         """
-        Back-translate rows from translated sheet to original sheet.
+        Back-translate answer columns from English to original language.
         
         Args:
             sheet_handler: GoogleSheetHandler instance
             original_sheet: Original worksheet
             english_sheet: English worksheet
-            answer_columns: List of column indices with answers
-            target_lang: Target language
-            source_lang: Source language
+            answer_columns: List of column indices containing answers
+            target_lang: Target language (original)
+            source_lang: Source language (English)
             llm: Language model instance to use for translation
-            start_row: Row to start translation from
+            start_row: Row to start translation from (default 3 to skip header and roles rows)
         """
-        english_values = english_sheet.get_all_values()
+        all_values = english_sheet.get_all_values()
         
+        headers_row = all_values[0] if all_values else []
         roles_row_idx = None
-        original_values = original_sheet.get_all_values()
         
-        for idx, row in enumerate(original_values):
+        for idx, row in enumerate(all_values):
             if row and len(row) > 0 and '#answerforge#' in row[0].lower():
                 roles_row_idx = idx
                 break
         
-        compliance_column_idx = None
+        skip_rows = set([0])
         if roles_row_idx is not None:
-            roles_row = original_values[roles_row_idx]
-            for col_idx, role in enumerate(roles_row):
-                role_clean = role.strip().lower()
-                if role_clean == "compliance":
-                    compliance_column_idx = col_idx
-                    print(f"Found compliance column at index {compliance_column_idx}")
-                    break
+            skip_rows.add(roles_row_idx)
         
-        headers = original_sheet.row_values(1)
         column_names = {}
         for col_idx in answer_columns:
             col_letter = gspread.utils.rowcol_to_a1(1, col_idx+1)[0]
-            column_names[col_idx] = headers[col_idx] if col_idx < len(headers) else f"Column {col_letter}"
+            column_names[col_idx] = headers_row[col_idx] if col_idx < len(headers_row) else f"Column {col_letter}"
         
-        total_rows = len(english_values)
+        total_rows = len(all_values)
         
-        for row_idx, row in enumerate(english_values):
+        # Log the row we're starting from
+        logger.info(f"Starting back-translation from row {start_row} (skipping header and marker rows)")
+        print(f"Starting back-translation from row {start_row} (skipping header and marker rows)")
+        
+        for row_idx, row in enumerate(all_values):
             if row_idx + 1 < start_row:
                 continue
                 
-            if row_idx < 2:  # Skip header and roles rows
+            if row_idx in skip_rows:
                 continue
             
+            logger.info(f"Back-translating Row {row_idx+1} of {total_rows}")
             print(f"\nBack-translating Row {row_idx+1} of {total_rows}...")
             
-            # Handle compliance column separately (copy directly)
-            if compliance_column_idx is not None and compliance_column_idx < len(row):
-                compliance_value = row[compliance_column_idx]
-                if compliance_value.strip():
-                    compliance_cell = gspread.utils.rowcol_to_a1(row_idx + 1, compliance_column_idx + 1)
-                    try:
-                        print(f"  Copying compliance value '{compliance_value}' directly to {compliance_cell}...")
-                        TranslationHandler.safe_update_cell(original_sheet, (row_idx + 1, compliance_column_idx + 1), compliance_value)
-                        print(f"  Compliance value copied successfully")
-                    except Exception as e:
-                        print(f"  Error copying compliance value: {e}")
-                    
-                    time.sleep(config.api_throttle_delay)
-            
-            # Handle answer columns (needs translation)
             for col_idx in answer_columns:
-                if col_idx == compliance_column_idx:
-                    continue
-                    
                 if col_idx >= len(row):
                     continue
                     
                 cell_value = row[col_idx]
                 if not cell_value.strip():
                     continue
+                    
+                column_name = column_names.get(col_idx, f"Column {col_idx+1}")
+                logger.info(f"Back-translating {column_name} in row {row_idx+1}")
                 
-                col_letter = gspread.utils.rowcol_to_a1(1, col_idx+1)[0]
-                col_name = column_names[col_idx]
-                cell = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
+                translated = TranslationHandler.translate_text(cell_value, source_lang, target_lang, llm)
                 
-                print(f"  Column {col_letter} ({col_name}): Back-translating... ", end="", flush=True)
-                back_translated = TranslationHandler.translate_text(cell_value, target_lang, source_lang, llm)
-                print("Done.")
+                if translated != cell_value:
+                    try:
+                        TranslationHandler.safe_update_cell(original_sheet, (row_idx+1, col_idx+1), translated)
+                        logger.info(f"Updated cell ({row_idx+1}, {col_idx+1}) with back-translation")
+                    except Exception as e:
+                        logger.error(f"Failed to update cell ({row_idx+1}, {col_idx+1}): {e}")
+                        print(f"Failed to update cell: {e}")
                 
-                print(f"  Updating cell {cell} with back-translation...")
-                
-                try:
-                    TranslationHandler.safe_update_cell(original_sheet, (row_idx + 1, col_idx + 1), back_translated)
-                    print(f"  Cell {cell} updated successfully.")
-                except Exception as e:
-                    print(f"  Error updating cell {cell}: {e}")
-                
-                time.sleep(config.api_throttle_delay)
+                # Add a small delay to avoid rate limits
+                time.sleep(0.5)
             
-            print(f"Completed back-translation for Row {row_idx+1}")
-        
-        print(f"\nCompleted back-translation of all rows from {start_row} to {total_rows}")
+            # Add a slightly longer delay between rows
+            time.sleep(1)
     
     @staticmethod
     def run_rfp_answering(english_sheet_name: str, selected_products=None, customer_index_path=None) -> bool:
         """
-        Run RFP answering process on an English sheet.
+        Run RFP answering workflow on the English sheet.
         
         Args:
             english_sheet_name: Name of the English sheet
-            selected_products: List of selected product names
-            customer_index_path: Path to customer index
+            selected_products: Optional list of selected products
+            customer_index_path: Optional path to customer index
             
         Returns:
             True if successful, False otherwise
         """
-        print("\n" + "="*80)
-        print(f"RUNNING RFP ANSWERING ON ENGLISH SHEET: {english_sheet_name}")
-        print("="*80 + "\n")
-        
         try:
-            # Import here to avoid circular imports
             from main import RFPProcessor
             
-            if selected_products:
-                print(f"Using selected products: {', '.join(selected_products)}")
-                
-            if customer_index_path:
-                folder_name = os.path.basename(customer_index_path).replace("_index", "")
-                print(f"Using customer index: {folder_name}")
-            else:
-                print("Using product knowledge only (no customer context)")
-                
-            # Create processor with the sheet name
+            logger.info(f"Starting RFP answering workflow for sheet: {english_sheet_name}")
+            print(f"\nStarting RFP answering workflow for sheet: {english_sheet_name}")
+            
+            # Create processor with English sheet
             processor = RFPProcessor(sheet_name=english_sheet_name)
             
-            # Call run_standard_workflow directly - set is_translation_subprocess=True
+            # Run standard workflow
             result = processor.run_standard_workflow(
                 selected_products=selected_products,
                 customer_index_path=customer_index_path,
-                is_translation_subprocess=True  # Indicate this is part of translation
+                is_translation_subprocess=True
             )
             
-            if result == 0:  # Success
-                print(f"\n✅ RFP answering completed successfully for sheet: {english_sheet_name}")
+            if result == 0:
+                logger.info("RFP answering workflow completed successfully")
+                print("\n✅ RFP answering workflow completed successfully")
                 return True
             else:
-                print(f"\n❌ RFP answering process failed with exit code: {result}")
+                logger.error("RFP answering workflow failed")
+                print("\n❌ RFP answering workflow failed")
                 return False
                 
         except Exception as e:
-            print(f"\n❌ Unexpected error running RFP answering: {e}")
-            import traceback
-            print(f"Error details: {traceback.format_exc()}")
+            logger.error(f"Error in RFP answering workflow: {e}")
+            print(f"\n❌ Error in RFP answering workflow: {e}")
             return False
     
     @staticmethod
@@ -463,117 +427,90 @@ class TranslationHandler:
             context_role: Role name for context fields
             answer_role: Role name for answer fields
             source_lang: Source language
-            target_lang: Target language
-            selected_products: List of selected product names
-            customer_index_path: Path to customer index - if provided, skip asking again
+            target_lang: Target language (default English)
+            selected_products: Optional list of selected products
+            customer_index_path: Optional path to customer index
         """
-        print("\n" + "="*80)
-        print(f"TRANSLATION WORKFLOW: {source_lang} → {target_lang} → {source_lang}")
-        print("="*80 + "\n")
-        
-        model_manager = ModelManager()
-        model_running, _ = model_manager.check_running_model("8080")
-        
-        if not model_running:
-            print("No model server detected on port 8080.")
-            model_manager.switch_models(None, config.rfp_model_cmd, "Starting LLM server")
-        else:
-            print("Model server is already running on port 8080.")
-        
-        llm_wrapper = LLMWrapper()
-        llm = llm_wrapper.get_llm("llamacpp", config.llm_model, config.llama_cpp_base_url, config.llama_cpp_base_url)
-        
-        original_sheet = sheet_handler.sheet
-        original_sheet_name = original_sheet.title
-        
-        # Create English sheet, always deleting the existing one if it exists
-        english_sheet = TranslationHandler.create_english_sheet(sheet_handler, original_sheet_name, force_new=True)
-        english_sheet_name = english_sheet.title
-        
-        headers = original_sheet.row_values(1)
-        roles_row = None
-        
-        for i in range(1, 10):
-            row = original_sheet.row_values(i)
-            if row and len(row) > 0 and '#answerforge#' in row[0].lower():
-                roles_row = row
-                break
-        
-        if not roles_row:
-            raise ValueError("Could not find role marker '#answerforge#' in sheet")
-        
-        columns_to_translate = []
-        for i, role in enumerate(roles_row):
-            role_clean = role.strip().lower()
-            if role_clean == question_role or role_clean == context_role:
-                columns_to_translate.append(i)
-        
-        print(f"\nTranslating from {source_lang} to {target_lang}...")
-        TranslationHandler.translate_sheet_rows(
-            sheet_handler, 
-            original_sheet, 
-            english_sheet, 
-            columns_to_translate, 
-            source_lang, 
-            target_lang, 
-            llm,
-            start_row=1
-        )
-        
-        print("\nTranslation to English complete. Now running RFP answering process.")
-        
-        # Let's select customer context here if it hasn't been provided
-        if customer_index_path is None:
-            # Get a reference to customer docs manager
-            from customer_docs import CustomerDocsManager
-            customer_docs_manager = CustomerDocsManager(get_config())
-            print("\nSelecting customer context for the translation workflow...")
+        try:
+            # Get current sheet
+            current_sheet = sheet_handler.sheet
+            original_sheet_name = current_sheet.title
             
-            selected_folder = customer_docs_manager._select_customer_folder(
-                is_translation_subprocess=True,
-                preselected_customer_path=None
+            logger.info(f"Starting translation workflow for sheet: {original_sheet_name}")
+            print(f"\nStarting translation workflow for sheet: {original_sheet_name}")
+            
+            # Create English sheet
+            english_sheet = TranslationHandler.create_english_sheet(sheet_handler, original_sheet_name)
+            
+            # Get column indices for translation
+            headers = current_sheet.row_values(1)
+            roles = current_sheet.row_values(2)
+            
+            # Find columns to translate
+            columns_to_translate = []
+            for i, role in enumerate(roles):
+                if role.lower() in [question_role.lower(), context_role.lower()]:
+                    columns_to_translate.append(i)
+            
+            if not columns_to_translate:
+                logger.error("No columns found for translation")
+                print("❌ No columns found for translation")
+                return
+            
+            logger.info(f"Found {len(columns_to_translate)} columns to translate")
+            print(f"\nFound {len(columns_to_translate)} columns to translate")
+            
+            # Get LLM for translation
+            llm = LLMWrapper()
+            
+            # Translate rows
+            TranslationHandler.translate_sheet_rows(
+                sheet_handler,
+                current_sheet,
+                english_sheet,
+                columns_to_translate,
+                source_lang,
+                target_lang,
+                llm
             )
             
-            if selected_folder and selected_folder.get("has_index", False):
-                customer_index_path = selected_folder.get("index_path")
-                logger.info(f"Selected customer index path: {customer_index_path}")
-                print(f"👥 Using customer context: {selected_folder['name']}")
-            else:
-                customer_index_path = None
-                logger.info("No customer context selected for translation workflow")
-                print("🔍 Using product knowledge only (no customer context)")
-        
-        rfp_success = TranslationHandler.run_rfp_answering(
-            english_sheet_name, 
-            selected_products=selected_products,
-            customer_index_path=customer_index_path
-        )
-        
-        if not rfp_success:
-            print("\nWarning: RFP answering process did not complete successfully.")
-            input_handler = InputHandler()
-            retry = input_handler.get_input_with_timeout("Do you want to continue with back-translation anyway? (y=yes/n=no)", timeout=config.default_timeout, default="y")
-            if retry.lower() != 'y':
-                print("Exiting translation workflow. Goodbye, Dave.")
-                return
-        
-        answer_columns = []
-        for i, role in enumerate(roles_row):
-            role_clean = role.strip().lower()
-            if role_clean == answer_role:
-                answer_columns.append(i)
-        
-        print(f"\nTranslating answers from {target_lang} back to {source_lang}...")
-        
-        TranslationHandler.back_translate_sheet_rows(
-            sheet_handler,
-            original_sheet,
-            english_sheet,
-            answer_columns,
-            target_lang,
-            source_lang,
-            llm,
-            start_row=1
-        )
-        
-        print(f"\nTranslation workflow complete.")
+            # Run RFP answering on English sheet
+            english_sheet_name = english_sheet.title
+            success = TranslationHandler.run_rfp_answering(
+                english_sheet_name,
+                selected_products,
+                customer_index_path
+            )
+            
+            if success:
+                # Find answer columns
+                answer_columns = []
+                for i, role in enumerate(roles):
+                    if role.lower() == answer_role.lower():
+                        answer_columns.append(i)
+                
+                if answer_columns:
+                    logger.info(f"Found {len(answer_columns)} answer columns for back-translation")
+                    print(f"\nFound {len(answer_columns)} answer columns for back-translation")
+                    
+                    # Back-translate answers
+                    TranslationHandler.back_translate_sheet_rows(
+                        sheet_handler,
+                        current_sheet,
+                        english_sheet,
+                        answer_columns,
+                        source_lang,
+                        target_lang,
+                        llm
+                    )
+                else:
+                    logger.warning("No answer columns found for back-translation")
+                    print("\n⚠️ No answer columns found for back-translation")
+            
+            logger.info("Translation workflow completed")
+            print("\n✅ Translation workflow completed")
+            
+        except Exception as e:
+            logger.error(f"Error in translation workflow: {e}")
+            print(f"\n❌ Error in translation workflow: {e}")
+            raise

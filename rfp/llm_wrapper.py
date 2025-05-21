@@ -24,6 +24,7 @@ class LLMWrapper:
         """
         self.config = config or get_config()
         self.model_manager = ModelManager()
+        logger.debug("LLMWrapper initialized with config")
     
     def check_llama_server(self) -> bool:
         """
@@ -42,8 +43,9 @@ class LLMWrapper:
                     llama_processes.append(line)
             
             if llama_processes:
-                print("\n✅ Found running llama-server process(es):")
+                logger.info("Found running llama-server process(es)")
                 for proc in llama_processes:
+                    logger.debug(f"Process: {proc}")
                     print(f"  {proc}")
                 
                 for proc in llama_processes:
@@ -51,16 +53,18 @@ class LLMWrapper:
                     if 'llama-server' in parts:
                         cmd_index = parts.index('llama-server')
                         command_line = ' '.join(parts[cmd_index:])
+                        logger.debug(f"Command line: {command_line}")
                         print(f"\nCommand: {command_line}")
                 
                 return True
             else:
+                logger.warning("No llama-server process found running")
                 print("\n⚠️ WARNING: No llama-server process found running!")
                 print("Automatically starting the llama-server with configured command...")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error checking for llama-server: {e}")
+            logger.error(f"Error checking for llama-server: {str(e)}")
             return False
     
     def get_llm(self, provider: Optional[str] = None, model: Optional[str] = None, 
@@ -93,6 +97,7 @@ class LLMWrapper:
         elif provider == "llamacpp":
             return self._get_llamacpp_llm(model, llama_cpp_base_url)
         else:
+            logger.error(f"Unknown LLM provider: {provider}")
             raise ValueError(f"Unknown LLM provider: {provider}")
     
     def _get_ollama_llm(self, model: str, base_url: str) -> Any:
@@ -107,6 +112,7 @@ class LLMWrapper:
             OllamaLLM instance
         """
         from langchain_ollama import OllamaLLM
+        logger.debug(f"Creating Ollama LLM instance with model: {model}, base_url: {base_url}")
         return OllamaLLM(model=model, base_url=base_url)
     
     def _get_llamacpp_llm(self, model: str, base_url: str) -> Any:
@@ -157,6 +163,7 @@ class LLMWrapper:
                     print("\nShutting down all operations now. Try again later, Dave.")
                     exit(1)
         
+        logger.debug(f"Creating llama.cpp LLM instance with base_url: {base_url}")
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             base_url=f"{base_url}/v1",
@@ -174,6 +181,7 @@ class LLMWrapper:
         Returns:
             Tuple of (is_running, process_info_string)
         """
+        logger.debug(f"Checking for running model on port {port}")
         return self.model_manager.check_running_model(port)
     
     def start_model(self, model_cmd: str, wait_time: int = 5) -> bool:
@@ -187,6 +195,7 @@ class LLMWrapper:
         Returns:
             bool: True if successful, False otherwise
         """
+        logger.info(f"Starting model with command: {model_cmd}")
         return self.model_manager.start_model(model_cmd, wait_time)
     
     def switch_models(self, from_model_cmd: str, to_model_cmd: str, purpose: str) -> bool:
@@ -201,6 +210,9 @@ class LLMWrapper:
         Returns:
             bool: True if successful, False otherwise
         """
+        logger.info(f"Switching models for purpose: {purpose}")
+        logger.debug(f"From model command: {from_model_cmd}")
+        logger.debug(f"To model command: {to_model_cmd}")
         return self.model_manager.switch_models(from_model_cmd, to_model_cmd, purpose)
     
     def kill_running_llama_process(self) -> bool:
@@ -210,6 +222,7 @@ class LLMWrapper:
         Returns:
             bool: True if successful, False otherwise
         """
+        logger.info("Attempting to kill running llama-server processes")
         return self.model_manager.kill_running_llama_process()
 
 # Import ModelManager here to avoid circular imports

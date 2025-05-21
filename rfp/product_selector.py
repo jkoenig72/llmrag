@@ -24,6 +24,7 @@ class ProductSelector:
         Returns:
             List of selected product names
         """
+        logger.info(f"Starting product selection from {len(available_products)} available products")
         print("\nAvailable Salesforce Products:")
         for i, product in enumerate(available_products, 1):
             print(f"{i}. {product}")
@@ -38,27 +39,34 @@ class ProductSelector:
                 ).strip()
                 
                 if not choice:
+                    logger.warning("Empty product selection received")
                     print("Please select at least one product.")
                     continue
                 
                 indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                logger.debug(f"Parsed product indices: {indices}")
                 
                 if len(indices) != len(set(indices)):
+                    logger.warning("Duplicate product selections detected")
                     print("Error: Duplicate selections. Please select different products.")
                     continue
                 
                 if len(indices) > 3:
+                    logger.warning(f"Too many products selected: {len(indices)}")
                     print("Error: Maximum 3 products allowed. Please try again.")
                     continue
                 
                 if any(idx < 0 or idx >= len(available_products) for idx in indices):
+                    logger.warning(f"Invalid product index in selection: {indices}")
                     print(f"Error: Invalid selection. Please choose numbers between 1 and {len(available_products)}.")
                     continue
                 
                 selected = [available_products[idx] for idx in indices]
+                logger.info(f"Successfully selected products: {selected}")
                 return selected
                 
             except ValueError:
+                logger.warning(f"Invalid input format in product selection: {choice}")
                 print("Error: Please enter valid numbers separated by commas.")
                 continue
     
@@ -79,6 +87,7 @@ class ProductSelector:
             question = TextProcessor.clean_text(record["roles"].get(question_role, ""))
             if question:
                 question_count += 1
+        logger.debug(f"Counted {question_count} questions in records")
         return question_count
     
     @staticmethod
@@ -100,6 +109,7 @@ class ProductSelector:
             if product.lower() in text_lower:
                 found_products.append(product)
         
+        logger.debug(f"Found product mentions in text: {found_products}")
         return found_products
     
     @staticmethod
@@ -131,6 +141,10 @@ class ProductSelector:
                 valid_products.append((row_num, product))
             else:
                 invalid_products.append((row_num, product))
+        
+        logger.info(f"Product validation results - Valid: {len(valid_products)}, Invalid: {len(invalid_products)}")
+        logger.debug(f"Valid products: {valid_products}")
+        logger.debug(f"Invalid products: {invalid_products}")
         
         return {
             "valid": valid_products,

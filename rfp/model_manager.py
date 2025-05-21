@@ -31,8 +31,10 @@ class ModelManager:
             result = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
             
             if result.returncode == 0:
+                logger.info(f"Found model server running on port {port}")
                 return True, result.stdout
             else:
+                logger.info(f"No model server found on port {port}")
                 return False, None
         except Exception as e:
             logger.error(f"Error checking model status on port {port}: {e}")
@@ -47,11 +49,13 @@ class ModelManager:
             bool: True if successful, False otherwise
         """
         try:
+            logger.info("Stopping any running llama-server processes")
             print("Stopping any running llama-server processes...")
             # Use pkill without shell=True for safety
             kill_cmd = ["pkill", "-f", "llama-server"]
             subprocess.run(kill_cmd, capture_output=True, text=True)
             time.sleep(3)
+            logger.info("Successfully stopped llama-server processes")
             return True
         except Exception as e:
             logger.error(f"Error killing llama-server processes: {e}")
@@ -71,6 +75,7 @@ class ModelManager:
             bool: True if successful, False otherwise
         """
         try:
+            logger.info(f"Starting model with command: {model_cmd}")
             print(f"Starting model with command:\n{model_cmd}")
             
             # Parse the command safely to avoid shell injection
@@ -95,6 +100,7 @@ class ModelManager:
                     text=True
                 )
             
+            logger.info(f"Waiting {wait_time} seconds for model initialization")
             print(f"Waiting {wait_time} seconds for model to initialize...")
             time.sleep(wait_time)
             
@@ -126,15 +132,19 @@ class ModelManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        logger.info(f"Switching models for purpose: {purpose}")
         print("\n" + "="*80)
         print(f"MODEL SWITCH: {purpose}")
         print("="*80 + "\n")
         
         if not ModelManager.kill_running_llama_process():
+            logger.warning("Failed to stop existing model, will try to start new model anyway")
             print("Warning: Failed to stop existing model. Will try to start new model anyway.")
         
         if not ModelManager.start_model(to_model_cmd):
+            logger.error("Failed to start new model")
             print("Error: Failed to start new model. Please check the model command and try again.")
             return False
         
+        logger.info("Model switch completed successfully")
         return True

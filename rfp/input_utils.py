@@ -45,6 +45,8 @@ class InputHandler:
         timeout_info = f" (Waiting {timeout}s before using default: '{default}')"
         prompt += timeout_info + "\n> "
         
+        logger.debug(f"Getting input with timeout {timeout}s, default: '{default}'")
+        
         # Set up the input thread
         result = [default]
         input_received = threading.Event()
@@ -61,12 +63,15 @@ class InputHandler:
         input_received.wait(timeout)
         
         if not input_received.is_set():
+            logger.info(f"No input received in {timeout} seconds, using default: '{default}'")
             print(f"\nNo input received in {timeout} seconds. Proceeding with default: '{default}'")
             return default
         
         if not result[0].strip():
+            logger.debug("Empty input received, using default")
             return default
             
+        logger.debug(f"Received input: '{result[0]}'")
         return result[0]
     
     @staticmethod
@@ -95,10 +100,12 @@ class InputHandler:
                 question_preview = question[:50] + "..." if len(question) > 50 else question
                 print(f"  Row {row_num}: {question_preview}")
         
+        logger.info(f"Found {question_count} questions in the Google Sheet")
         print(f"\nFound {question_count} questions in the Google Sheet.")
         print("Sheet rows with questions:")
         
         if not valid_rows:
+            logger.warning("No questions found in the sheet")
             print("No questions found in the sheet.")
             return None
         
@@ -110,6 +117,7 @@ class InputHandler:
         choice = input_handler.get_input_with_timeout(prompt, timeout, default_str)
         
         if not choice.strip() or choice.strip() == default_str:
+            logger.info(f"Starting from row {default_row} (first question)")
             print(f"Starting from row {default_row} (first question).")
             return default_row
         
@@ -117,12 +125,15 @@ class InputHandler:
             start_row = int(choice)
             
             if start_row not in valid_rows:
+                logger.warning(f"Invalid row {start_row} selected, using default row {default_row}")
                 print(f"Error: Row {start_row} does not contain a question. Starting from row {default_row} instead.")
                 return default_row
             
+            logger.info(f"Starting from selected row {start_row}")
             return start_row
             
         except ValueError:
+            logger.warning(f"Invalid input '{choice}', using default row {default_row}")
             print(f"Error: Invalid input. Starting from row {default_row} instead.")
             return default_row
     
@@ -139,9 +150,12 @@ class InputHandler:
         Returns:
             True for yes/confirm, False for no/cancel
         """
+        logger.debug(f"Getting confirmation with timeout {timeout}s, default: '{default}'")
         input_handler = InputHandler()
         response = input_handler.get_input_with_timeout(prompt, timeout, default)
-        return response.lower() in ('y', 'yes', 'true', 't', '1')
+        result = response.lower() in ('y', 'yes', 'true', 't', '1')
+        logger.debug(f"Confirmation result: {result}")
+        return result
     
     @staticmethod
     def select_from_list(options: List[str], prompt: str = "Select an option", 
@@ -159,9 +173,11 @@ class InputHandler:
             Selected option or None if selection is invalid
         """
         if not options:
+            logger.warning("No options available to select from")
             print("No options available to select from.")
             return None
             
+        logger.debug(f"Presenting {len(options)} options for selection")
         for i, option in enumerate(options, 1):
             print(f"{i}. {option}")
         
@@ -175,10 +191,14 @@ class InputHandler:
         try:
             index = int(choice) - 1
             if 0 <= index < len(options):
-                return options[index]
+                selected = options[index]
+                logger.info(f"Selected option: {selected}")
+                return selected
             else:
+                logger.warning(f"Invalid selection {choice}, must be between 1 and {len(options)}")
                 print(f"Invalid selection. Please choose a number between 1 and {len(options)}.")
                 return None
         except ValueError:
+            logger.warning(f"Invalid input '{choice}', expected a number")
             print("Invalid input. Please enter a number.")
             return None

@@ -24,6 +24,7 @@ class ServiceContainer:
         """
         self.config = config or get_config()
         self._services = {}
+        self._current_sheet_name = None  # Track the current sheet name
         logger.info("Service container initialized")
     
     def get(self, service_key: str) -> Any:
@@ -61,16 +62,28 @@ class ServiceContainer:
         """
         Get the sheet handler service.
         
+        If the sheet name has changed since the last call, reinitialize the handler.
+        
         Returns:
             GoogleSheetHandler instance
         """
+        # Check if sheet name has changed
+        sheet_name = self.config.rfp_sheet_name
+        if self._current_sheet_name != sheet_name:
+            # If sheet name changed, reset the cached handler
+            if "sheet_handler" in self._services:
+                logger.info(f"Sheet name changed from {self._current_sheet_name} to {sheet_name}, reinitializing handler")
+                del self._services["sheet_handler"]
+            self._current_sheet_name = sheet_name
+            
         if "sheet_handler" not in self._services:
             from sheets_handler import GoogleSheetHandler
             
+            logger.info(f"Creating sheet handler with sheet name: {sheet_name}")
             self._services["sheet_handler"] = GoogleSheetHandler(
                 self.config.google_sheet_id,
                 self.config.google_credentials_file,
-                self.config.rfp_sheet_name
+                sheet_name
             )
             logger.debug("Created sheet handler service")
             
@@ -156,87 +169,6 @@ class ServiceContainer:
             
         return self._services["question_processor"]
     
-    def get_qa_chain(self) -> Any:
-        """
-        Get the QA chain service.
-        
-        Returns:
-            RetrievalQA instance
-        """
-        if "qa_chain" not in self._services:
-            from langchain.chains import RetrievalQA
-            from langchain.schema import Document
-            from langchain.schema.retriever import BaseRetriever
-            from prompts import PromptManager
-            import warnings
-            
-            warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain")
-            
-            class DummyRetriever(BaseRetriever):
-                search_kwargs: Dict[str, Any] = {"k": 0}
-                
-                def _get_relevant_documents(self, query: str, **kwargs) -> list:
-                    return []
-                    
-                def get_relevant_documents(self, query: str, **kwargs) -> list:
-                    return self._get_relevant_documents(query, **kwargs)
-                
-                async def _aget_relevant_documents(self, query: str, **kwargs) -> list:
-                    return []
-                
-                async def aget_relevant_documents(self, query: str, **kwargs) -> list:
-                    return await self._aget_relevant_documents(query, **kwargs)
-            
-            dummy_retriever = DummyRetriever()
-            llm = self.get_llm()
-            
-            self._services["qa_chain"] = RetrievalQA.from_chain_type(
-                llm=llm,
-                retriever=dummy_retriever,
-                chain_type="refine",
-                input_key="question",
-                return_source_documents=True,
-                chain_type_kwargs={
-                    "question_prompt": PromptManager.QUESTION_PROMPT,
-                    "refine_prompt": PromptManager.REFINE_PROMPT,
-                    "document_variable_name": "context_str",
-                    "initial_response_name": "existing_answer",
-                }
-            )
-            logger.debug("Created QA chain service")
-            
-        return self._services["qa_chain"]
-    
-    def get_text_processor(self) -> Any:
-        """
-        Get the text processor service.
-        
-        Returns:
-            TextProcessor class
-        """
-        if "text_processor" not in self._services:
-            from text_processing import TextProcessor
-            
-            self._services["text_processor"] = TextProcessor
-            logger.debug("Created text processor service")
-            
-        return self._services["text_processor"]
-    
-    def get_model_manager(self) -> Any:
-        """
-        Get the model manager service.
-        
-        Returns:
-            ModelManager instance
-        """
-        if "model_manager" not in self._services:
-            from model_manager import ModelManager
-            
-            self._services["model_manager"] = ModelManager()
-            logger.debug("Created model manager service")
-            
-        return self._services["model_manager"]
-    
     def get_translation_handler(self) -> Any:
         """
         Get the translation handler service.
@@ -251,21 +183,6 @@ class ServiceContainer:
             logger.debug("Created translation handler service")
             
         return self._services["translation_handler"]
-    
-    def get_input_utils(self) -> Any:
-        """
-        Get the input utilities service.
-        
-        Returns:
-            InputHandler class
-        """
-        if "input_utils" not in self._services:
-            from input_utils import InputHandler
-            
-            self._services["input_utils"] = InputHandler
-            logger.debug("Created input utils service")
-            
-        return self._services["input_utils"]
     
     def get_customer_docs_manager(self) -> Any:
         """
