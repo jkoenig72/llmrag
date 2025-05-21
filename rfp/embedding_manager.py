@@ -84,12 +84,13 @@ class EmbeddingManager:
                 )
                 logger.info("Successfully fell back to CPU mode for embeddings")
                 print("💻 Successfully switched to CPU mode for embeddings")
-            elif not use_cpu:
+            elif "CUDA out of memory" in error_str:
+                logger.warning("GPU memory full, falling back to CPU mode")
+                print("⚠️ GPU memory full, falling back to CPU mode")
+            else:
                 logger.warning(f"Error with GPU mode: {e}, falling back to CPU")
                 print(f"⚠️ Error with GPU mode: {e}. Falling back to CPU.")
                 return self._load_embeddings(use_cpu=True)
-            else:
-                raise
         
         if self.current_embeddings is None:
             logger.warning("Final attempt to load embeddings with CPU mode")

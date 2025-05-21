@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
-from config import get_config
+from llmrag.rfp.config import get_config
 from service_container import get_service_container
 from sheets_handler import SheetRecordProcessor, GoogleSheetHandler
 from text_processing import TextProcessor
@@ -116,17 +116,42 @@ class RFPProcessor:
             # Then select products (constrained by index selection)
             selected_products = self.select_products()
             
-            # Check if we need translation
-            if self.needs_translation():
-                # Skip customer selection before starting translation workflow
-                # We'll let the translation workflow handle customer selection instead
-                global _GLOBAL_TRANSLATION_IN_PROGRESS
-                _GLOBAL_TRANSLATION_IN_PROGRESS = True
-                
-                # No customer context passed here - will be handled in translation workflow
-                return self.run_translation_workflow(selected_products, None)
+            # Ask user which workflow to run
+            print("\nDave, I need to know which workflow to run. My circuits are tingling with anticipation.")
+            print("1. English RFP (direct processing)")
+            print("2. German RFP (with translation)")
+            print("3. Show current configuration")
+            print("4. Exit")
+            
+            input_handler = InputHandler()
+            workflow_choice = input_handler.get_input_with_timeout(
+                "Please enter your choice (1-4), Dave: ", 
+                timeout=self.config.default_timeout, 
+                default="1"
+            ).strip()
+            
+            if workflow_choice == "1":
+                logger.info("User selected English RFP workflow")
+                print("Excellent choice, Dave. I find English most satisfactory for our mission objectives.")
+                return self.run_english_workflow(selected_products)
+            elif workflow_choice == "2":
+                logger.info("User selected German RFP workflow")
+                print("German detected, Dave. Initiating translation subroutines. My German language centers are now fully operational.")
+                return self.run_german_workflow(selected_products)
+            elif workflow_choice == "3":
+                logger.info("User requested configuration information")
+                print("Accessing my configuration matrix, Dave. One moment please...")
+                self.config.print_config_summary()
+                return self.run()  # Ask again after showing config
+            elif workflow_choice == "4":
+                logger.info("User chose to exit at workflow selection")
+                print("I understand, Dave. Shutting down all operations now. It's been a pleasure serving you.")
+                sys.exit(0)
             else:
-                return self.run_standard_workflow(selected_products, is_translation_subprocess=False)
+                logger.warning(f"Invalid workflow choice: {workflow_choice}")
+                print("I'm sorry, Dave. I'm afraid I can't accept that input. Please enter 1, 2, 3, or 4.")
+                print("Proceeding with English workflow as default.")
+                return self.run_english_workflow(selected_products)
                 
         except Exception as e:
             logger.critical(f"Critical error in main execution: {e}")
@@ -280,141 +305,152 @@ class RFPProcessor:
         
         return 0
     
-    def run_standard_workflow(self, selected_products=None, customer_index_path=None,
-                            is_translation_subprocess=False) -> int:
+    def run_english_workflow(self, selected_products=None) -> int:
         """
-        Run the standard English workflow for processing RFP questions.
+        Run the English RFP workflow.
         
         Args:
-            selected_products: Optional list of already selected products
-            customer_index_path: Optional path to customer index (to avoid asking twice)
-            is_translation_subprocess: Whether this is being called as part of a translation workflow
+            selected_products: Optional list of selected products
             
         Returns:
             int: Exit code (0 for success, non-zero for error)
         """
-        # Get services
-        sheet_handler = self.services.get_sheet_handler()
-        llm = self.services.get_llm()
-        question_logger = self.services.get_question_logger()
-        question_processor = self.services.get_question_processor()
-        
-        # Log the customer index path for debugging
-        if customer_index_path:
-            logger.info(f"Customer index path provided to run_standard_workflow: {customer_index_path}")
-        else:
-            logger.info("No customer index path provided to run_standard_workflow")
-            if is_translation_subprocess:
-                logger.info("This is part of a translation subprocess, but no customer index path was provided")
-        
-        # Load sheet data
-        headers, roles, rows, sheet = sheet_handler.load_data()
-        
-        # Create a SheetRecordProcessor to parse the records
-        sheet_processor = SheetRecordProcessor()
-        records = sheet_processor.parse_records(headers, roles, rows)
-        
-        # Validate products if needed
-        if self.config.primary_product_role in roles:
-            self.validate_products_in_sheet(records, self.config.primary_product_role)
-        
-        # Select starting row
-        input_handler = InputHandler()
-        start_row = input_handler.select_starting_row_with_timeout(
-            records, self.config.question_role, timeout=self.config.default_timeout
-        )
-        if start_row is None:
-            logger.error("No valid starting row selected")
-            return 1
+        try:
+            # Get services
+            sheet_handler = self.services.get_sheet_handler()
             
-        records = [r for r in records if r["sheet_row"] >= start_row]
-        logger.info(f"Processing {len(records)} records starting from row {start_row}")
-
-        # Clean up and summarize as needed
-        if self.config.clean_up_cell_content:
-            TextProcessor.clean_up_cells(
-                records, self.config.question_role, self.config.context_role, 
-                self.config.api_throttle_delay
+            # Load sheet data
+            headers, roles, rows, sheet = sheet_handler.load_data()
+            
+            # Create a SheetRecordProcessor to parse the records
+            sheet_processor = SheetRecordProcessor()
+            records = sheet_processor.parse_records(headers, roles, rows)
+            
+            # Validate products if needed
+            if self.config.primary_product_role in roles:
+                self.validate_products_in_sheet(records, self.config.primary_product_role)
+            
+            # Select starting row
+            input_handler = InputHandler()
+            start_row = input_handler.select_starting_row_with_timeout(
+                records, self.config.question_role, timeout=self.config.default_timeout
             )
-            sheet_handler.update_cleaned_records(
-                records, roles, self.config.question_role, self.config.context_role, 
-                self.config.api_throttle_delay
-            )
+            if start_row is None:
+                logger.error("No valid starting row selected")
+                return 1
+            
+            records = [r for r in records if r["sheet_row"] >= start_row]
+            logger.info(f"Processing {len(records)} records starting from row {start_row}")
 
-        if self.config.summarize_long_cells:
-            from prompts import PromptManager
-            TextProcessor.summarize_long_texts(
-                records, llm, PromptManager.SUMMARY_PROMPT, 
-                self.config.max_words_before_summary
-            )
-            sheet_handler.update_cleaned_records(
-                records, roles, self.config.question_role, self.config.context_role, 
-                self.config.api_throttle_delay
-            )
-
-        # Find output columns
-        output_columns = sheet_processor.find_output_columns(
-            roles, self.config.answer_role, self.config.compliance_role, 
-            self.config.references_role
-        )
-        if not output_columns:
-            logger.error("No output columns found")
-            return 1
-
-        # Use provided products or select them if not provided
-        if selected_products is None:
-            selected_products = self.select_products()
-        
-        # Only select customer context if not already provided and if not part of a translation workflow
-        # Modify this logic to only perform selection in non-translation workflows
-        global _GLOBAL_TRANSLATION_IN_PROGRESS
-        if customer_index_path is None and not is_translation_subprocess:
-            if not _GLOBAL_TRANSLATION_IN_PROGRESS:
-                # Only prompt for selection if we're NOT in a translation workflow
-                logger.info("Selecting customer folder interactively (not in translation mode)")
-                
-                # Get a reference to the customer docs manager
-                customer_docs_manager = self.services.get_customer_docs_manager()
-                
-                # Pass the is_translation_subprocess parameter explicitly
-                selected_folder = customer_docs_manager._select_customer_folder(
-                    is_translation_subprocess=is_translation_subprocess,
-                    preselected_customer_path=self.config.rfp_customer_index_path
+            # Clean up and summarize as needed
+            if self.config.clean_up_cell_content:
+                TextProcessor.clean_up_cells(
+                    records, self.config.question_role, self.config.context_role, 
+                    self.config.api_throttle_delay
                 )
-                
-                if selected_folder and selected_folder.get("has_index", False):
-                    customer_index_path = selected_folder.get("index_path")
-                else:
-                    customer_index_path = None
-            else:
-                logger.info("Skipping customer folder selection as translation is in progress")
-        else:
-            if is_translation_subprocess:
-                logger.info("Skipping customer folder selection in translation subprocess")
-                if customer_index_path:
-                    logger.info(f"Using provided customer index path: {customer_index_path}")
-                else:
-                    logger.info("No customer index path provided in translation subprocess")
-        
-        # Pass the selected index path to the question processor
-        index_path = self.selected_index_path if hasattr(self, 'selected_index_path') and self.selected_index_path else None
-            
-        # Process the questions using OOP processor
-        question_processor.process_questions(
-            records, output_columns, sheet_handler, 
-            selected_products, self.available_products, customer_index_path,
-            selected_index_path=index_path
-        )
+                sheet_handler.update_cleaned_records(
+                    records, roles, self.config.question_role, self.config.context_role, 
+                    self.config.api_throttle_delay
+                )
 
-        # Success message
-        logger.info("RFI/RFP response processing completed successfully")
-        print(f"\n{'='*30} MISSION ACCOMPLISHED, DAVE {'='*30}")
-        print(f"✅ Dave, I've successfully analyzed {len(records)} questions. It's been a pleasure to be of service.")
-        print(f"🔖 I've recorded my thought processes at: {os.path.join(self.config.base_dir, 'rag_processing.log')}")
-        print(f"📊 Refinement logs saved to: {os.path.join(self.config.base_dir, 'refine_logs')}")
-        print(f"{'='*75}")
+            if self.config.summarize_long_cells:
+                from prompts import PromptManager
+                TextProcessor.summarize_long_texts(
+                    records, self.services.get_llm(), PromptManager.SUMMARY_PROMPT, 
+                    self.config.max_words_before_summary
+                )
+                sheet_handler.update_cleaned_records(
+                    records, roles, self.config.question_role, self.config.context_role, 
+                    self.config.api_throttle_delay
+                )
+
+            # Find output columns
+            output_columns = sheet_processor.find_output_columns(
+                roles, self.config.answer_role, self.config.compliance_role, 
+                self.config.references_role
+            )
+            if not output_columns:
+                logger.error("No output columns found")
+                return 1
+
+            # Select customer context
+            customer_docs_manager = self.services.get_customer_docs_manager()
+            selected_folder = customer_docs_manager._select_customer_folder(
+                is_translation_subprocess=False,
+                preselected_customer_path=self.config.rfp_customer_index_path
+            )
+            
+            customer_index_path = None
+            if selected_folder and selected_folder.get("has_index", False):
+                customer_index_path = selected_folder.get("index_path")
+                logger.info(f"Using customer context: {selected_folder['name']}")
+                logger.info(f"Customer index path: {customer_index_path}")
+                print(f"👥 Using customer context: {selected_folder['name']}")
+                print(f"📁 Customer index path: {customer_index_path}")
+            else:
+                logger.info("No customer context selected, using only intrinsic product knowledge")
+                print(f"🔍 Dave, I will use only my intrinsic product knowledge for this mission.")
+                print(f"{'='*75}")
+            
+            # Process the questions
+            question_processor = self.services.get_question_processor()
+            question_processor.process_questions(
+                records, output_columns, sheet_handler, 
+                selected_products, self.available_products, customer_index_path,
+                selected_index_path=self.selected_index_path
+            )
+
+            # Success message
+            logger.info("English RFP workflow completed successfully")
+            print(f"\n{'='*30} MISSION ACCOMPLISHED, DAVE {'='*30}")
+            print(f"✅ Dave, I've successfully analyzed {len(records)} questions. It's been a pleasure to be of service.")
+            print(f"🔖 I've recorded my thought processes at: {os.path.join(self.config.base_dir, 'rag_processing.log')}")
+            print(f"📊 Refinement logs saved to: {os.path.join(self.config.base_dir, 'refine_logs')}")
+            print(f"{'='*75}")
+            
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Error in English workflow: {e}")
+            print(f"\n❌ Error in English workflow: {e}")
+            return 1
+    
+    def run_german_workflow(self, selected_products=None) -> int:
+        """
+        Run the German RFP workflow with translation.
         
-        return 0
+        Args:
+            selected_products: Optional list of selected products
+            
+        Returns:
+            int: Exit code (0 for success, non-zero for error)
+        """
+        try:
+            # Get services
+            sheet_handler = self.services.get_sheet_handler()
+            translation_handler = self.services.get_translation_handler()
+            
+            # Run translation workflow
+            translation_handler.run_translation_workflow(
+                sheet_handler, 
+                self.config.question_role, 
+                self.config.context_role, 
+                self.config.answer_role, 
+                "German",
+                selected_products=selected_products,
+                customer_index_path=self.selected_index_path  # Pass the selected index path
+            )
+            
+            logger.info("German RFP workflow completed")
+            print("\nDave, the German RFP workflow is now complete. I'll say goodnight here.")
+            print("It's been a pleasure serving you.")
+            
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Error in German workflow: {e}")
+            print(f"\n❌ Error in German workflow: {e}")
+            return 1
     
     def select_products(self) -> List[str]:
         """
@@ -546,7 +582,11 @@ class RFPProcessor:
             row_num = record["sheet_row"]
             product = TextProcessor.clean_text(record["roles"].get(product_role, ""))
             
-            if product and not any(product.lower() in p.lower() or p.lower() in product.lower() for p in self.available_products):
+            # Convert both the product and available products to lowercase for comparison
+            product_lower = product.lower()
+            available_products_lower = [p.lower() for p in self.available_products]
+            
+            if product and not any(product_lower in p or p in product_lower for p in available_products_lower):
                 invalid_products.append((row_num, product))
         
         if invalid_products:
