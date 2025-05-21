@@ -1,0 +1,12 @@
+,,Additional Information,Additional Information2,Primary Product,Question,Compliant Level,Answer
+#answerforge#,,context,context,primary_product,question,compliance,answer
+,,,,Sales Cloud,The Campaign Analytics applications are responsible for analyzing existing and prospective customers to help design appropriate product recommendations.,,
+,,,,Sales Cloud,Campaign Performance Analyzing provides quantitative tools to analyze customers and prospects to help design the right recommendations by gathering and analyzing data from past campaign planning success and performance in a continuous loop and feed this data back into the campaign planning feature.,,
+,,,,Sales Cloud,"Campaign Design applications provide the necessary tools to formulate a campaign, taking into account the targeted customers and products.",,
+,,,,Sales Cloud,Campaign Creation creates campaigns to quickly push opportunities out to pre-defined sales territories using a coordinated sales methodology.,,
+,,,,Sales Cloud,"Campaign Preparation can pre-define campaign execution channels and fulfillment tool for the use of direct mail, email, fax, web, events, telesales and sales.",,
+,,,,Sales Cloud,"Campaign Template Creation creates campaign templates to pre-define frequently used campaigns, segments, content templates, and their tracking metrics, to be pre-defined to step through campaign setup and execution, and yet customizable.",,
+,,,,Sales Cloud,Lead Generation applications provide the tools necessary to generate leads from a variety of sources.,,
+,,,,Sales Cloud,Sales Lead Capturing handles the generation of leads. A lead can be generated from many different sources and customer interactions including the result of a targeted marketing campaign. Potential customer information is obtained from external sources or from internally generated data.,,
+,,,,Sales Cloud,Campaign Execution & Refinement applications provide the necessary tools to execute a previously designed campaign.,,
+,,,,Sales Cloud,"Campaign In Execution Updating provides a campaign update function, based on statistics gathered via Campaign Performance Tracking, adjustments can be made to the Campaign while still in execution",,

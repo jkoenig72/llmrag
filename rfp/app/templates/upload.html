@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Upload RFP{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">Upload RFP</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Current Status:</strong> {{ queue_status }}
+                    </div>
+                    
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Email Address</label>
+                            <input type="email" class="form-control" id="email" name="email" required 
+                                placeholder="You'll receive a notification when processing is complete">
+                            <div class="form-text">We'll send you a notification when processing is complete.</div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="rfp_file" class="form-label">RFP CSV File</label>
+                            <input type="file" class="form-control" id="rfp_file" name="rfp_file" accept=".csv" required>
+                            <div class="form-text">Upload a CSV file containing the RFP questions (max 50MB).</div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="additional_docs" class="form-label">Additional Documents (optional)</label>
+                            <input type="file" class="form-control" id="additional_docs" name="additional_docs" accept=".pdf,.docx,.doc" multiple>
+                            <div class="form-text">Upload up to {{ max_docs }} supporting documents (PDF, DOCX) for RAG context (max 50MB each).</div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="form-label">RFP Language</label>
+                            <div class="d-flex">
+                                <div class="form-check me-4">
+                                    <input class="form-check-input" type="radio" name="language" id="language_english" value="english" checked>
+                                    <label class="form-check-label" for="language_english">
+                                        English
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="language" id="language_german" value="german">
+                                    <label class="form-check-label" for="language_german">
+                                        German
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-text">Select the language of your RFP. If German is selected, we'll automatically translate.</div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="form-label">Product Focus</label>
+                            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+                                {% for product in products %}
+                                <div class="col">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="product_{{ product|replace(' ', '_') }}" 
+                                            id="product_{{ product|replace(' ', '_') }}" value="1">
+                                        <label class="form-check-label" for="product_{{ product|replace(' ', '_') }}">
+                                            {{ product }}
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="form-text">Select products relevant to this RFP. This helps focus the responses.</div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="fas fa-cloud-upload-alt me-2"></i>Submit RFP
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>
+                        <i class="fas fa-lock me-1"></i>Your data is secure and will be processed according to our data policy.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Validate file size before upload
+    document.querySelector('form').addEventListener('submit', function(e) {
+        const rfpFile = document.getElementById('rfp_file').files[0];
+        const additionalDocs = document.getElementById('additional_docs').files;
+        
+        if (rfpFile && rfpFile.size > 50 * 1024 * 1024) {
+            e.preventDefault();
+            alert('RFP file exceeds the maximum size limit of 50MB.');
+            return;
+        }
+        
+        if (additionalDocs.length > {{ max_docs }}) {
+            e.preventDefault();
+            alert(`You can upload a maximum of {{ max_docs }} additional documents.`);
+            return;
+        }
+        
+        for (let i = 0; i < additionalDocs.length; i++) {
+            if (additionalDocs[i].size > 50 * 1024 * 1024) {
+                e.preventDefault();
+                alert(`File "${additionalDocs[i].name}" exceeds the maximum size limit of 50MB.`);
+                return;
+            }
+        }
+    });
+    
+    // Display selected file count
+    document.getElementById('additional_docs').addEventListener('change', function(e) {
+        const fileCount = e.target.files.length;
+        const fileText = document.querySelector('label[for="additional_docs"] + .form-text');
+        
+        if (fileCount > 0) {
+            fileText.innerHTML = `${fileCount} file(s) selected. Maximum {{ max_docs }} files allowed (max 50MB each).`;
+        } else {
+            fileText.innerHTML = 'Upload up to {{ max_docs }} supporting documents (PDF, DOCX) for RAG context (max 50MB each).';
+        }
+    });
+});
+</script>
+{% endblock %}

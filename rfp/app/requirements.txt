@@ -1,0 +1,13 @@
+# Web application requirements
+flask==2.3.2
+werkzeug==2.3.6
+gunicorn==21.2.0
+
+# Required for file processing
+pandas==2.0.3
+openpyxl==3.1.2
+
+# Required for Google Sheets integration
+gspread==5.10.0
+google-auth==2.22.0
+

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}Job Status{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-lg-8 offset-lg-2">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h3 class="mb-0">RFP Processing Status</h3>
+                    <span class="badge {% if job.status == 'queued' %}bg-warning{% elif job.status == 'processing' %}bg-info{% elif job.status == 'completed' %}bg-success{% else %}bg-danger{% endif %}">
+                        {{ job.status|title }}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <h5 class="text-muted">Job ID</h5>
+                                <p class="lead">{{ job.id }}</p>
+                            </div>
+                            <div class="mb-3">
+                                <h5 class="text-muted">Submission Time</h5>
+                                <p>{{ job.submitted_at }}</p>
+                            </div>
+                            {% if job.started_at %}
+                            <div class="mb-3">
+                                <h5 class="text-muted">Processing Started</h5>
+                                <p>{{ job.started_at }}</p>
+                            </div>
+                            {% endif %}
+                            {% if job.completed_at %}
+                            <div class="mb-3">
+                                <h5 class="text-muted">Completed</h5>
+                                <p>{{ job.completed_at }}</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <h5 class="text-muted">RFP File</h5>
+                                <p>{{ job.rfp_file }}</p>
+                            </div>
+                            <div class="mb-3">
+                                <h5 class="text-muted">Language</h5>
+                                <p>{{ job.language|title }}</p>
+                            </div>
+                            <div class="mb-3">
+                                <h5 class="text-muted">Product Focus</h5>
+                                {% if job.products %}
+                                <ul class="list-unstyled">
+                                    {% for product in job.products %}
+                                    <li><i class="fas fa-check-circle text-success me-2"></i>{{ product }}</li>
+                                    {% endfor %}
+                                </ul>
+                                {% else %}
+                                <p>No specific products selected</p>
+                                {% endif %}
+                            </div>
+                            {% if job.additional_docs %}
+                            <div class="mb-3">
+                                <h5 class="text-muted">Additional Documents</h5>
+                                <ul class="list-unstyled">
+                                    {% for doc in job.additional_docs %}
+                                    <li>
+                                        <i class="fas {% if doc.endswith('.pdf') %}fa-file-pdf{% elif doc.endswith('.docx') or doc.endswith('.doc') %}fa-file-word{% else %}fa-file{% endif %} me-2"></i>
+                                        {{ doc }}
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    {% if job.status == 'queued' and queue_position %}
+                    <div class="alert alert-warning">
+                        <div class="d-flex align-items-center">
+                            <div class="spinner-border text-warning me-3" role="status">
+                                <span class="visually-hidden">Waiting...</span>
+                            </div>
+                            <div>
+                                <h5 class="alert-heading">Waiting in Queue</h5>
+                                <p class="mb-0">Your job is currently in position {{ queue_position }} in the queue. Processing will begin automatically when it reaches the front of the queue.</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% elif job.status == 'processing' %}
+                    <div class="alert alert-info">
+                        <div class="d-flex align-items-center">
+                            <div class="spinner-border text-info me-3" role="status">
+                                <span class="visually-hidden">Processing...</span>
+                            </div>
+                            <div>
+                                <h5 class="alert-heading">Processing in Progress</h5>
+                                <p class="mb-0">Your RFP is currently being processed. This may take some time depending on the size and complexity of your document.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                    </div>
+                    {% elif job.status == 'completed' %}
+                    <div class="alert alert-success">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-check-circle fa-2x me-3"></i>
+                            <div>
+                                <h5 class="alert-heading">Processing Complete!</h5>
+                                <p class="mb-0">Your RFP has been successfully processed. You can download the results below.</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% if result_file %}
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('download_results', job_id=job.id) }}" class="btn btn-success">
+                            <i class="fas fa-download me-2"></i>Download Results
+                        </a>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Result file not found. Please contact support.
+                    </div>
+                    {% endif %}
+                    {% elif job.status == 'failed' %}
+                    <div class="alert alert-danger">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-exclamation-circle fa-2x me-3"></i>
+                            <div>
+                                <h5 class="alert-heading">Processing Failed</h5>
+                                <p class="mb-0">There was an error processing your RFP. Please contact support for assistance.</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% if job.error %}
+                    <div class="card mt-3">
+                        <div class="card-header bg-danger text-white">
+                            Error Details
+                        </div>
+                        <div class="card-body">
+                            <pre class="text-danger">{{ job.error }}</pre>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                    
+                    <div class="mt-4">
+                        <a href="{{ url_for('upload_form') }}" class="btn btn-outline-primary">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Upload
+                        </a>
+                        <a href="{{ url_for('view_queue') }}" class="btn btn-outline-secondary ms-2">
+                            <i class="fas fa-list me-2"></i>View All Jobs
+                        </a>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>
+                        <i class="fas fa-clock me-1"></i>Last updated: {{ now.strftime('%Y-%m-%d %H:%M:%S') }}
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if job.status == 'queued' or job.status == 'processing' %}
+<script>
+    // Auto refresh the page every 30 seconds for queued or processing jobs
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+</script>
+{% endif %}
+{% endblock %}
